@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import useStore, { getExt, qualityZone } from '../store/useStore'
+import useStore, { getExt, qualityZone, isPortrait } from '../store/useStore'
 import { buildAiMaxSnippet } from '../lib/aiMaxGenerator.js'
 import Toggle from './Toggle'
 import s from './RightPanel.module.css'
@@ -10,7 +10,7 @@ const FORMAT_KEYS = ['auto', 'webp', 'avif', 'jpg', 'png', 'mp4', 'webm', 'gif']
 function Section({ title, action, actionLabel, children }) {
   return (
     <div className={s.section}>
-      <div className={s.sectionTitle}>
+      <div className={s.sectionTitle} style={{textTransform:'none'}}>
         {title}
         {action && <span className={s.sectionAction} onClick={action}>{actionLabel}</span>}
       </div>
@@ -153,7 +153,16 @@ export default function RightPanel() {
       </Section>
 
       {/* ── RESPONSIVE ── */}
-      <Section title="Responsive Export">
+      <Section title={
+          <span style={{display:'flex',alignItems:'center',gap:6}}>
+            Responsive Export
+            {fo && isPortrait(fo) && (
+              <span style={{fontSize:9,color:'#a78bfa',background:'rgba(167,139,250,0.1)',border:'1px solid rgba(167,139,250,0.3)',borderRadius:3,padding:'1px 5px',fontWeight:400,textTransform:'none',letterSpacing:0}}>
+                portrait mode
+              </span>
+            )}
+          </span>
+        }>
         <select className={s.respSelect} value={responsiveMode} onChange={(e) => setResponsiveMode(e.target.value)}>
           <option value="none">None</option>
           <option value="standard">Standard Responsive</option>

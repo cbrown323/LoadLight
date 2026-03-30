@@ -236,3 +236,55 @@
   white-space: nowrap;
 }
 .addBtn:hover { background: var(--cyan-glow); }
+
+/* ── Group dividers ── */
+.groupDivider {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px 4px;
+  flex-shrink: 0;
+}
+.groupLabel {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.groupCount {
+  font-size: 9px;
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+.groupLine {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ── Orientation tag ── */
+.fileNameRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.orientTag {
+  font-size: 9px;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+.orientPortrait  { color: #a78bfa; }
+.orientLandscape { color: var(--cyan); }
+
+/* ── Dimensions in file info ── */
+.dims {
+  font-size: 10px;
+  color: var(--text-muted);
+}

@@ -1,77 +1,67 @@
 /**
- * aiMaxGenerator.js
- * Generates a single token-optimized JSON snippet for all exported assets.
+ * aiMaxGenerator.js v2.1
  *
- * Format rationale:
- * - Array rows with shared schema = no repeated keys (biggest token saving)
- * - Nested sizes array = one row per logical asset, not one per breakpoint
- * - Short keys throughout: w, h, dur, fmt
- * - Palette (3 dominant hex colors) per image — useful for AI layout decisions
- * - Trailing nulls omitted from asset rows
- * - No instructions block — wastes tokens, LLMs don't need hand-holding
+ * Grok-informed format: explicit named objects (not positional array rows).
+ * LLMs parse field names directly — no schema→position mental mapping.
+ * Strong llm_directive forces reference-by-ID mode for large batches.
+ * Palette via canvas pixel sampling, 3 dominant colors per image.
  */
 
-import { getExt } from '../store/useStore.js'
-
-// ── Dominant color extraction from a loaded image ──────────
-// Samples a grid of pixels, clusters by proximity, returns top 3 hex colors.
+// ── Dominant color extraction ─────────────────────────────
 export function extractPalette(imageUrl) {
   return new Promise((resolve) => {
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.onload = () => {
-      try {
-        const size = 40  // sample at 40x40 for speed
-        const c = document.createElement('canvas')
-        c.width = c.height = size
-        const ctx = c.getContext('2d')
-        ctx.drawImage(img, 0, 0, size, size)
-        const data = ctx.getImageData(0, 0, size, size).data
+    try {
+      const img = new Image()
+      // No crossOrigin needed for blob: URLs (same origin)
+      img.onload = () => {
+        try {
+          const SIZE = 48
+          const c   = document.createElement('canvas')
+          c.width   = SIZE
+          c.height  = SIZE
+          const ctx = c.getContext('2d', { willReadFrequently: true })
+          ctx.drawImage(img, 0, 0, SIZE, SIZE)
+          const { data } = ctx.getImageData(0, 0, SIZE, SIZE)
 
-        // Bucket colors into 8-level quantization per channel
-        const buckets = {}
-        for (let i = 0; i < data.length; i += 4) {
-          const r = Math.round(data[i]   / 32) * 32
-          const g = Math.round(data[i+1] / 32) * 32
-          const b = Math.round(data[i+2] / 32) * 32
-          const key = `${r},${g},${b}`
-          buckets[key] = (buckets[key] || 0) + 1
-        }
+          // Quantize to 6-bit per channel for clustering
+          const counts = {}
+          for (let i = 0; i < data.length; i += 4) {
+            if (data[i + 3] < 128) continue   // skip transparent
+            const r = Math.round(data[i]   / 32) * 32
+            const g = Math.round(data[i+1] / 32) * 32
+            const b = Math.round(data[i+2] / 32) * 32
+            const k = (r << 16) | (g << 8) | b
+            counts[k] = (counts[k] || 0) + 1
+          }
 
-        const sorted = Object.entries(buckets)
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 3)
-          .map(([k]) => {
-            const [r, g, b] = k.split(',').map(Number)
-            return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')
-          })
+          const palette = Object.entries(counts)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3)
+            .map(([k]) => {
+              const n = parseInt(k)
+              const r = (n >> 16) & 0xff
+              const g = (n >>  8) & 0xff
+              const b =  n        & 0xff
+              return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')
+            })
 
-        resolve(sorted)
-      } catch {
-        resolve([])
+          resolve(palette.length ? palette : null)
+        } catch { resolve(null) }
       }
-    }
-    img.onerror = () => resolve([])
-    img.src = imageUrl
+      img.onerror = () => resolve(null)
+      img.src = imageUrl
+    } catch { resolve(null) }
   })
 }
 
 /**
- * Build the AI Max JSON snippet for all files.
- *
- * @param {Array}  files        — store file objects (with width, height, duration, previewUrl)
- * @param {string} format       — output format setting
- * @param {Array}  breakpoints  — [{name, w}] responsive breakpoints
- * @param {string} responsiveMode
- * @param {boolean} withPalette — extract dominant colors (requires canvas access)
- *
- * @returns {Promise<string>} — formatted snippet string
+ * Build AI Max v2.1 snippet for all files.
+ * Returns the full <script> block as a string.
  */
-export async function buildAiMaxSnippet(files, { format, breakpoints, responsiveMode, withPalette = true }) {
+export async function buildAiMaxSnippet(files, { format, breakpoints = [], responsiveMode = 'none' }) {
   const useResponsive = responsiveMode !== 'none' && breakpoints.length > 0
-
   const assets = []
-  const groups = { img: [], vid: [] }
+  const groups = {}
 
   for (let i = 0; i < files.length; i++) {
     const fo      = files[i]
@@ -80,66 +70,61 @@ export async function buildAiMaxSnippet(files, { format, breakpoints, responsive
     const type    = isVideo ? 'vid' : 'img'
     const name    = fo.file.name.replace(/\.[^.]+$/, '')
 
-    // Resolve output format
+    // Output format
     let fmt = format === 'auto' ? (isVideo ? 'mp4' : 'webp') : format
     if (isGif && format === 'auto') fmt = 'mp4'
 
-    // Build sizes array
-    let sizes
-    if (useResponsive && !isVideo) {
+    // Responsive sizes — nested [[w,h], ...] skipping upscales
+    let sizes = null
+    if (!isVideo) {
       const srcW = fo.width || 0
-      const validBps = breakpoints
-        .filter((bp) => srcW === 0 || bp.w <= srcW)
-        .sort((a, b) => b.w - a.w)
-      sizes = validBps.length > 0
-        ? validBps.map((bp) => [bp.w, fo.height ? Math.round(fo.height * (bp.w / (fo.width || bp.w))) : 0])
-        : [[fo.width || 0, fo.height || 0]]
-    } else {
-      sizes = [[fo.width || 0, fo.height || 0]]
+      const bps  = useResponsive
+        ? breakpoints.filter((bp) => srcW === 0 || bp.w <= srcW).sort((a, b) => b.w - a.w)
+        : []
+      if (bps.length > 0) {
+        sizes = bps.map((bp) => {
+          const h = (fo.width && fo.height) ? Math.round(fo.height * (bp.w / fo.width)) : null
+          return h ? [bp.w, h] : [bp.w]
+        })
+      } else if (fo.width) {
+        sizes = fo.height ? [[fo.width, fo.height]] : [[fo.width]]
+      }
+    } else if (fo.width) {
+      sizes = fo.height ? [[fo.width, fo.height]] : [[fo.width]]
     }
-    // Remove zero dimensions
-    sizes = sizes.map(([w, h]) => h > 0 ? [w, h] : [w]).filter(([w]) => w > 0)
-    if (sizes.length === 0) sizes = undefined
 
-    // Duration for video
-    const dur = isVideo && fo.duration ? Math.round(fo.duration * 10) / 10 : undefined
+    // Duration
+    const dur = (isVideo && fo.duration) ? Math.round(fo.duration * 10) / 10 : null
 
-    // Palette for images
-    let palette
-    if (withPalette && !isVideo && fo.previewUrl) {
+    // Palette — only for images with a valid blob URL
+    let palette = null
+    if (!isVideo && fo.previewUrl) {
       palette = await extractPalette(fo.previewUrl)
-      if (palette.length === 0) palette = undefined
     }
 
-    // Build asset row — omit trailing undefined fields
-    const row = [i, type, name, fmt]
-    if (sizes)   row.push(sizes)
-    else         row.push(null)
-    if (dur !== undefined) row.push(dur)
-    else if (palette)      row.push(null)
-    if (palette)           row.push(palette)
+    // Build asset object — omit null fields
+    const asset = { id: i, type, name, fmt }
+    if (sizes)   asset.sizes   = sizes
+    if (dur)     asset.dur     = dur
+    if (palette) asset.palette = palette
 
-    // Trim trailing nulls
-    while (row.length > 4 && row[row.length - 1] === null) row.pop()
+    assets.push(asset)
 
-    assets.push(row)
+    // Groups
+    if (!groups[type]) groups[type] = []
     groups[type].push(i)
   }
 
-  // Remove empty groups
-  const cleanGroups = {}
-  if (groups.img.length) cleanGroups.img = groups.img
-  if (groups.vid.length) cleanGroups.vid = groups.vid
-
-  const schema = ['id', 'type', 'name', 'fmt', 'sizes', 'dur', 'palette']
-
   const payload = {
-    meta:   { v: '1.3', tool: 'loadlight', n: files.length, _parse: 'schema-mapped' },
-    schema,
+    meta: {
+      v:    '2.1',
+      tool: 'loadlight',
+      n:    files.length,
+      llm_directive: 'AI MAX MODE — Token-optimized asset manifest. Parse once. Reference every asset ONLY by its numeric id. Use groups to organize by type. Never repeat full asset details unless explicitly asked. Saves massive tokens when handling hundreds of files.',
+    },
     assets,
-    groups: cleanGroups,
+    groups,
   }
 
-  const json = JSON.stringify(payload, null, 2)
-  return `<!-- LOADLIGHT AI MAX v1.3 -->\n<script type="application/json" id="loadlight-ai-max">\n${json}\n</script>`
+  return `<!-- LOADLIGHT AI MAX v2.1 -->\n<script type="application/json" id="loadlight-ai-max">\n${JSON.stringify(payload, null, 2)}\n</script>`
 }

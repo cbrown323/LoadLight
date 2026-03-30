@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
+import ReleaseNotes from './ReleaseNotes'
 import useStore from '../store/useStore'
 import s from './TopBar.module.css'
 
@@ -67,7 +68,8 @@ export default function TopBar() {
         <div className={s.logo}>
           <div className={s.logoIcon}>LL</div>
           LoadLight
-          <span className={s.version}>v1.3</span>
+          <span className={s.version}>v1.3a</span>
+          <ReleaseNotes />
         </div>
 
         <input className={s.projectName} value={projectName}

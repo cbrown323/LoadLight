@@ -260,11 +260,7 @@ export default function CenterPanel() {
           </div>
         )}
 
-        {!fo && (
-          <div className={s.emptyCenter}>
-            <span className={s.noIcon}>🖼</span>
-          </div>
-        )}
+
       </div>
 
       {/* Controls */}

@@ -211,7 +211,6 @@
   color: var(--text-muted);
   font-weight: 400;
   letter-spacing: 0.3px;
-  margin-left: 2px;
-  align-self: flex-end;
-  margin-bottom: 1px;
+  margin-left: 1px;
+  align-self: center;
 }

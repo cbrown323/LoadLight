@@ -41,6 +41,30 @@ export const BP_PRESETS = {
   ],
 }
 
+// Portrait equivalents — use height as the constraining dimension
+export const BP_PRESETS_PORTRAIT = {
+  none:     [],
+  standard: [
+    { name: 'Full',    w: 1920 },
+    { name: 'Large',   w: 1280 },
+    { name: 'Medium',  w: 900  },
+    { name: 'Small',   w: 600  },
+  ],
+  mobile: [
+    { name: 'Small',   w: 480  },
+    { name: 'Medium',  w: 900  },
+    { name: 'Large',   w: 1280 },
+  ],
+  custom: [
+    { name: 'Custom 1', w: 1080 },
+    { name: 'Custom 2', w: 720  },
+  ],
+}
+
+export function isPortrait(fo) {
+  return fo && fo.height > 0 && fo.width > 0 && fo.height > fo.width
+}
+
 export const QUALITY_PRESETS = {
   web:        { quality: 72, format: 'auto' },
   mobile:     { quality: 55, format: 'webp' },
@@ -101,7 +125,17 @@ const useStore = create((set, get) => ({
     return { files: [...s.files.slice(0, idx + 1), copy, ...s.files.slice(idx + 1)] }
   }),
 
-  setActiveIdx: (i) => set({ activeIdx: i }),
+  setActiveIdx: (i) => {
+    set({ activeIdx: i })
+    // Auto-adapt breakpoints for portrait vs landscape
+    const state = get()
+    const fo    = state.files[i]
+    if (!fo || state.responsiveMode === 'none' || state.responsiveMode === 'custom') return
+    const portrait  = fo.height > 0 && fo.width > 0 && fo.height > fo.width
+    const presetSrc = portrait ? BP_PRESETS_PORTRAIT : BP_PRESETS
+    const newBPs    = (presetSrc[state.responsiveMode] || []).slice()
+    set({ breakpoints: newBPs })
+  },
 
   setFileStatus: (id, qStatus) =>
     set((s) => ({ files: s.files.map((f) => (f.id === id ? { ...f, qStatus } : f)) })),

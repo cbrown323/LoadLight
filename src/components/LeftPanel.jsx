@@ -1,5 +1,5 @@
 import React, { useRef, useCallback } from 'react'
-import useStore, { fmtBytes, getExt } from '../store/useStore'
+import useStore, { fmtBytes, getExt, isPortrait } from '../store/useStore'
 import s from './LeftPanel.module.css'
 
 const BADGE_CLASS = {
@@ -10,6 +10,16 @@ const BADGE_CLASS = {
 
 function FileBadge({ ext }) {
   return <span className={`${s.badge} ${BADGE_CLASS[ext] || s.badgePng}`}>{ext.toUpperCase()}</span>
+}
+
+function OrientationTag({ fo }) {
+  if (!fo.width || !fo.height) return null
+  const portrait = fo.height > fo.width
+  return (
+    <span className={`${s.orientTag} ${portrait ? s.orientPortrait : s.orientLandscape}`}>
+      {portrait ? '▯' : '▭'}
+    </span>
+  )
 }
 
 function FileItem({ fo, index, isActive }) {
@@ -23,9 +33,13 @@ function FileItem({ fo, index, isActive }) {
         }
       </div>
       <div className={s.meta}>
-        <div className={s.fileName}>{fo.file.name}</div>
+        <div className={s.fileNameRow}>
+          <span className={s.fileName}>{fo.file.name}</span>
+          <OrientationTag fo={fo} />
+        </div>
         <div className={s.fileInfo}>
           {fmtBytes(fo.file.size)}&nbsp;
+          {fo.width && fo.height && <span className={s.dims}>{fo.width}×{fo.height}&nbsp;</span>}
           <FileBadge ext={getExt(fo.file.name)} />
         </div>
       </div>
@@ -39,6 +53,16 @@ function FileItem({ fo, index, isActive }) {
   )
 }
 
+function GroupDivider({ label, count }) {
+  return (
+    <div className={s.groupDivider}>
+      <span className={s.groupLabel}>{label}</span>
+      <span className={s.groupCount}>{count}</span>
+      <div className={s.groupLine} />
+    </div>
+  )
+}
+
 export default function LeftPanel() {
   const { files, activeIdx, addFiles, applyPreset } = useStore()
   const inputRef  = useRef()
@@ -48,13 +72,15 @@ export default function LeftPanel() {
   const handleDrop = useCallback((e) => {
     e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files)
   }, [addFiles])
-
   const handleInput = (e) => { addFiles(e.target.files); e.target.value = '' }
+
+  // Sort: images first, then video/gif
+  const isVideoFile = (fo) => fo.file.type.startsWith('video/') || fo.file.name.toLowerCase().endsWith('.gif')
+  const images = files.map((fo, i) => ({ fo, i })).filter(({ fo }) => !isVideoFile(fo))
+  const videos = files.map((fo, i) => ({ fo, i })).filter(({ fo }) => isVideoFile(fo))
 
   return (
     <aside className={s.panel}>
-
-      {/* Header row — Files label + count + Add button inline */}
       <div className={s.header}>
         <span className={s.headerLabel}>Files</span>
         <span className={s.countBadge}>{files.length}</span>
@@ -64,13 +90,11 @@ export default function LeftPanel() {
         </div>
       </div>
 
-      {/* Hidden file inputs */}
       <input ref={inputRef} type="file" multiple accept="image/*,video/*,.gif,.webp,.avif"
         style={{ display: 'none' }} onChange={handleInput} />
       <input ref={folderRef} type="file" webkitdirectory="" multiple
         style={{ display: 'none' }} onChange={handleInput} />
 
-      {/* Drop zone — no buttons inside, just the drop target */}
       <div
         className={`${s.dropZone} ${dragging ? s.dragOver : ''}`}
         onDrop={handleDrop}
@@ -82,7 +106,6 @@ export default function LeftPanel() {
         <div className={s.dropText}>Drop images, GIFs or video here</div>
       </div>
 
-      {/* File list */}
       <div className={s.fileList}>
         {files.length === 0 ? (
           <div className={s.empty}>
@@ -91,13 +114,27 @@ export default function LeftPanel() {
             <div className={s.emptyHint}>Drop files above to get started</div>
           </div>
         ) : (
-          files.map((fo, i) => (
-            <FileItem key={fo.id} fo={fo} index={i} isActive={i === activeIdx} />
-          ))
+          <>
+            {images.length > 0 && (
+              <>
+                <GroupDivider label="Images" count={images.length} />
+                {images.map(({ fo, i }) => (
+                  <FileItem key={fo.id} fo={fo} index={i} isActive={i === activeIdx} />
+                ))}
+              </>
+            )}
+            {videos.length > 0 && (
+              <>
+                <GroupDivider label="Video" count={videos.length} />
+                {videos.map(({ fo, i }) => (
+                  <FileItem key={fo.id} fo={fo} index={i} isActive={i === activeIdx} />
+                ))}
+              </>
+            )}
+          </>
         )}
       </div>
 
-      {/* Batch controls */}
       <div className={s.batchControls}>
         <label className={s.batchLabel}>
           <div className={s.check} />

@@ -88,16 +88,7 @@
 }
 .noIcon { font-size: 36px; opacity: 0.3; }
 
-.emptyCenter {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: var(--text-muted);
-  font-size: 13px;
-}
+
 
 /* Video controls */
 .controls {
