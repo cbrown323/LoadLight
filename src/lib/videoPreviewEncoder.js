@@ -1,14 +1,23 @@
 /**
  * videoPreviewEncoder.js
- * Encodes a short preview clip for the After panel.
- * - 4 second trim
- * - Max 640px on the LONG edge (handles portrait correctly)
- * - Uses 'fast' preset (ultrafast not always available in wasm build)
+ * Encodes a 4s preview clip via ffmpeg.wasm for the After panel.
+ *
+ * Scale strategy — works for both portrait and landscape:
+ *   scale=640:640:force_original_aspect_ratio=decrease
+ *   pad=640:640:(ow-iw)/2:(oh-ih)/2:black   (no — simpler below)
+ *
+ * Actually the simplest reliable approach in wasm is:
+ *   scale=w=640:h=640:force_original_aspect_ratio=decrease
+ * This fits the video inside a 640×640 box, keeping aspect ratio,
+ * outputting whatever the natural dimensions are (no padding).
+ * Then we ensure even pixel counts with another scale step.
+ *
+ * We deliberately avoid if() expressions — they require shell escaping
+ * that the wasm exec() array API does not apply.
  */
 import { getFFmpeg } from './ffmpegLoader.js'
 
 const PREVIEW_DURATION = 4
-const PREVIEW_MAX_PX   = 640
 
 export async function encodeVideoPreview(file, opts, onProgress, onLog) {
   const {
@@ -17,9 +26,8 @@ export async function encodeVideoPreview(file, opts, onProgress, onLog) {
     fps      = 0,
   } = opts
 
-  const isGif     = file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif'
-  const fmt       = (fmtSetting === 'auto' || fmtSetting === 'gif') ? 'mp4' : fmtSetting
-  const inExt     = isGif ? 'gif' : (file.name.split('.').pop() || 'mp4')
+  const isGif      = file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif'
+  const inExt      = isGif ? 'gif' : (file.name.split('.').pop() || 'mp4')
   const inputName  = `prev_in_${Date.now()}.${inExt}`
   const outputName = `prev_out_${Date.now()}.mp4`
 
@@ -27,37 +35,48 @@ export async function encodeVideoPreview(file, opts, onProgress, onLog) {
   onLog?.('Loading ffmpeg…')
   const { ff, fetchFile } = await getFFmpeg(onLog)
 
-  onLog?.('Writing to virtual FS…')
+  onLog?.('Writing file…')
   await ff.writeFile(inputName, await fetchFile(file))
   onProgress?.(20)
 
   const crf = Math.round(38 - (quality / 100) * 16)
 
-  // Scale the longest dimension to PREVIEW_MAX_PX, keep aspect ratio, ensure even dims
-  // This works for both landscape AND portrait without errors
-  const scaleFilter = `scale='if(gt(iw,ih),min(${PREVIEW_MAX_PX}\\,iw),-2)':'if(gt(iw,ih),-2,min(${PREVIEW_MAX_PX}\\,ih))'`
-  const vfParts = [scaleFilter]
+  // scale=w:h:force_original_aspect_ratio=decrease
+  // Fits the video inside 640×640, keeps aspect ratio, no distortion.
+  // Works identically for portrait (e.g. 1080×1920 → 360×640) and
+  // landscape (e.g. 1920×1080 → 640×360).
+  // The trailing scale=-2:-2 step snaps to even pixel counts for libx264.
+  const vfParts = [
+    'scale=640:640:force_original_aspect_ratio=decrease',
+    'scale=trunc(iw/2)*2:trunc(ih/2)*2',  // ensure even dims for libx264
+  ]
   if (fps > 0) vfParts.push(`fps=${fps}`)
 
   const args = [
-    '-i',       inputName,
-    '-t',       String(PREVIEW_DURATION),
-    '-vf',      vfParts.join(','),
-    '-c:v',     'libx264',
-    '-crf',     String(crf),
-    '-preset',  'fast',
-    '-pix_fmt', 'yuv420p',
-    '-movflags','+faststart',
+    '-i',        inputName,
+    '-t',        String(PREVIEW_DURATION),
+    '-vf',       vfParts.join(','),
+    '-c:v',      'libx264',
+    '-crf',      String(crf),
+    '-preset',   'fast',
+    '-pix_fmt',  'yuv420p',
+    '-movflags', '+faststart',
     '-an',
-    '-y',       outputName,
+    '-y',        outputName,
   ]
 
-  onLog?.(`Encoding ${PREVIEW_DURATION}s preview (CRF ${crf})…`)
+  onLog?.(`Encoding ${PREVIEW_DURATION}s preview — CRF ${crf}…`)
+  onLog?.(`Filter: ${vfParts.join(', ')}`)
+
   await ff.exec(args)
   onProgress?.(88)
 
   const data = await ff.readFile(outputName)
-  const blob = new Blob([data.buffer], { type: 'video/mp4' })
+  if (!data || data.byteLength === 0) throw new Error('ffmpeg produced empty output — check the log for errors')
+
+  // data is a Uint8Array view into wasm heap — must copy before heap is freed
+  const copied = data.slice(0)
+  const blob = new Blob([copied], { type: 'video/mp4' })
   const url  = URL.createObjectURL(blob)
 
   try { await ff.deleteFile(inputName)  } catch (_) {}

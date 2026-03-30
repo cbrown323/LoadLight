@@ -78,7 +78,8 @@ export async function encodeVideo(file, opts) {
     await ff.exec(args)
     const data     = await ff.readFile(outputName)
     const mimeType = fmt === 'webm' ? 'video/webm' : fmt === 'gif' ? 'image/gif' : 'video/mp4'
-    const blob     = new Blob([data.buffer], { type: mimeType })
+    // slice() copies out of wasm heap before it gets freed
+    const blob     = new Blob([data.slice(0)], { type: mimeType })
     const filename = targetWidths.length > 1 && w > 0 ? `${baseName}-${w}.${fmt}` : `${baseName}.${fmt}`
     results.push({ filename, blob, width: w })
     try { await ff.deleteFile(outputName) } catch (_) {}
