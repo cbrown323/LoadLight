@@ -1,16 +1,8 @@
-/**
- * scripts/download-ffmpeg.js
- * Run once: node scripts/download-ffmpeg.js
- * Downloads ffmpeg.wasm assets into public/ffmpeg/ so they're served
- * from the same origin — no CORS, no worker restrictions on Vercel.
- */
-import https from 'https'
-import fs    from 'fs'
-import path  from 'path'
-import { fileURLToPath } from 'url'
+const https = require('https')
+const fs    = require('fs')
+const path  = require('path')
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const OUT_DIR   = path.join(__dirname, '..', 'public', 'ffmpeg')
+const OUT_DIR = path.join(__dirname, '..', 'public', 'ffmpeg')
 
 const FILES = [
   {
@@ -33,19 +25,20 @@ function download(url, dest) {
   return new Promise((resolve, reject) => {
     const filePath = path.join(OUT_DIR, dest)
     if (fs.existsSync(filePath) && fs.statSync(filePath).size > 1000) {
-      console.log(`  ✓ ${dest} already exists — skipping`)
+      console.log('  already exists, skipping: ' + dest)
       return resolve()
     }
-    console.log(`  ↓ Downloading ${dest}…`)
+    console.log('  downloading: ' + dest)
     const file = fs.createWriteStream(filePath)
     function get(u) {
       https.get(u, (res) => {
         if (res.statusCode === 301 || res.statusCode === 302) return get(res.headers.location)
-        if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode} for ${u}`))
+        if (res.statusCode !== 200) return reject(new Error('HTTP ' + res.statusCode + ' for ' + u))
         res.pipe(file)
         file.on('finish', () => {
           file.close()
-          console.log(`  ✓ ${dest} (${(fs.statSync(filePath).size/1048576).toFixed(1)} MB)`)
+          const mb = (fs.statSync(filePath).size / 1048576).toFixed(1)
+          console.log('  done: ' + dest + ' (' + mb + ' MB)')
           resolve()
         })
       }).on('error', reject)
@@ -54,6 +47,10 @@ function download(url, dest) {
   })
 }
 
-console.log('Downloading ffmpeg.wasm assets → public/ffmpeg/\n')
-for (const f of FILES) await download(f.url, f.dest)
-console.log('\nAll done. Commit public/ffmpeg/ and redeploy.')
+async function main() {
+  console.log('Downloading ffmpeg assets to public/ffmpeg/\n')
+  for (const f of FILES) await download(f.url, f.dest)
+  console.log('\nAll done. Run: git add . && git commit -m "add ffmpeg assets" && git push')
+}
+
+main().catch(e => { console.error(e); process.exit(1) })

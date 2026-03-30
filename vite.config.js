@@ -5,13 +5,16 @@ export default defineConfig({
   plugins: [react()],
   server: {
     headers: {
-      // Required for ffmpeg.wasm SharedArrayBuffer
-      // 'credentialless' allows CDN fetches without CORP headers (unlike 'require-corp')
-      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Opener-Policy':  'same-origin',
       'Cross-Origin-Embedder-Policy': 'credentialless',
     },
   },
   optimizeDeps: {
     exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
+  },
+  build: {
+    rollupOptions: {
+      external: [],
+    },
   },
 })
