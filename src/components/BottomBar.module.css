@@ -1,0 +1,163 @@
+/* ── Shell ── */
+.bar {
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  transition: height 0.2s ease;
+}
+
+/* ── Top row — always 60px ── */
+.topRow {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+/* ── Log row — sits below, inside the bar ── */
+.logRow {
+  border-top: 1px solid var(--border);
+  background: rgba(10, 13, 20, 0.82);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  padding: 0 14px;
+  max-height: 72px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.logRow::-webkit-scrollbar { width: 3px; }
+.logRow::-webkit-scrollbar-thumb { background: var(--border); }
+
+.logInner {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 0;
+}
+
+.logLine {
+  font-family: monospace;
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+.logLine:last-of-type { color: var(--cyan); }
+
+.logCursor {
+  font-family: monospace;
+  font-size: 10px;
+  color: var(--cyan);
+  animation: blink 0.7s infinite;
+  display: block;
+}
+
+/* ── Queue ── */
+.queue {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  overflow-x: auto;
+  min-width: 0;
+  align-items: center;
+}
+.queue::-webkit-scrollbar { height: 2px; }
+.queue::-webkit-scrollbar-thumb { background: var(--border); }
+
+.qEmpty {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  padding: 4px 8px;
+}
+
+.qItem {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 9px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.qItemError { border-color: rgba(239,68,68,0.35) !important; }
+
+.qDot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.dot_done       { background: var(--green); }
+.dot_processing { background: var(--cyan); animation: blink 0.8s infinite; }
+.dot_pending    { background: var(--text-muted); }
+.dot_error      { background: var(--red); }
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+.qLabel {
+  font-size: 10px;
+  color: var(--text-secondary);
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.qStatus { font-size: 9px; padding: 1px 5px; border-radius: 3px; }
+.status_done       { background: rgba(34,211,160,0.12); color: var(--green);      }
+.status_processing { background: rgba(0,212,255,0.12);  color: var(--cyan);       }
+.status_pending    { background: var(--bg-base);        color: var(--text-muted); }
+.status_error      { background: rgba(239,68,68,0.12);  color: var(--red);        }
+
+/* ── Progress ── */
+.progressWrap { width: 140px; flex-shrink: 0; }
+.progressLabel {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+}
+.progressBar { height: 3px; background: var(--bg-surface); border-radius: 2px; overflow: hidden; }
+.progressFill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--cyan), var(--green));
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+/* ── Stats ── */
+.stats { display: flex; gap: 14px; flex-shrink: 0; }
+.stat  { text-align: right; }
+.statVal { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.green   { color: var(--green); }
+.statLbl { font-size: 9px; color: var(--text-muted); margin-top: 1px; }
+
+/* ── Export button ── */
+.exportBtn {
+  padding: 0 20px;
+  height: 36px;
+  background: linear-gradient(135deg, var(--cyan), #0099DD);
+  border: none;
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+  font-weight: 700;
+  color: #000;
+  flex-shrink: 0;
+  letter-spacing: -0.2px;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.exportBtn:hover:not(:disabled) {
+  box-shadow: 0 0 20px rgba(0,212,255,0.45);
+  transform: scale(1.03);
+}
+.exportBtn:active:not(:disabled) { transform: scale(0.98); }
+.exportBtn:disabled { opacity: 0.4; cursor: not-allowed; }

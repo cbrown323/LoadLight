@@ -1,0 +1,207 @@
+.bar {
+  height: 48px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  white-space: nowrap;
+}
+
+.logoIcon {
+  width: 26px;
+  height: 26px;
+  background: linear-gradient(135deg, var(--cyan), #0066FF);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.projectName {
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  outline: none;
+  transition: border-color 0.15s, color 0.15s;
+  width: 160px;
+}
+.projectName:focus {
+  border-color: var(--border-cyan);
+  color: var(--text-primary);
+}
+
+.spacer { flex: 1; }
+
+.viewToggle {
+  display: flex;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.vtBtn {
+  padding: 5px 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border: none;
+  background: transparent;
+  transition: all 0.15s;
+}
+.vtBtn:hover:not(.active) {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.vtBtn.active {
+  background: var(--cyan);
+  color: #000;
+  font-weight: 600;
+}
+
+.topAction {
+  padding: 5px 12px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-secondary);
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.topAction:hover {
+  border-color: var(--border-cyan);
+  color: var(--cyan);
+}
+
+.iconBtn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.iconBtn:hover {
+  border-color: var(--border-cyan);
+  color: var(--cyan);
+}
+
+/* Preset modal */
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-cyan);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.modalTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.modalRow {
+  display: flex;
+  gap: 8px;
+}
+.modalInput {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+.modalInput:focus { border-color: var(--border-cyan); }
+.modalBtn {
+  padding: 6px 14px;
+  background: var(--cyan);
+  border: none;
+  border-radius: var(--radius);
+  font-size: 12px;
+  font-weight: 600;
+  color: #000;
+  transition: opacity 0.15s;
+}
+.modalBtn:hover { opacity: 0.85; }
+.presetList {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.presetItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.presetItem:hover { border-color: var(--border-cyan); }
+.presetName { font-size: 12px; color: var(--text-primary); }
+.presetActions { display: flex; gap: 5px; }
+.presetBtn {
+  padding: 3px 9px;
+  font-size: 11px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  transition: all 0.15s;
+}
+.presetLoad { border-color: var(--border-cyan); color: var(--cyan); }
+.presetLoad:hover { background: var(--cyan-glow); }
+.presetDel:hover { border-color: rgba(239,68,68,0.4); color: var(--red); }
+.presetEmpty { font-size: 11px; color: var(--text-muted); text-align: center; padding: 12px 0; }
+.modalMsg { font-size: 11px; color: var(--green); text-align: center; }
+.modalClose {
+  padding: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: 11px;
+  transition: all 0.15s;
+}
+.modalClose:hover { border-color: var(--border-cyan); color: var(--text-secondary); }

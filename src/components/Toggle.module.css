@@ -1,0 +1,29 @@
+.sw {
+  width: 32px;
+  height: 18px;
+  background: var(--cyan);
+  border-radius: 9px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.sw.off {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+}
+.knob {
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border-radius: 50%;
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  transition: all 0.2s;
+}
+.sw.off .knob {
+  right: auto;
+  left: 2px;
+  background: var(--text-muted);
+}
