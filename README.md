@@ -24,7 +24,16 @@ npm run dev
 
 ## Deploy to Vercel
 
-### 1. Push to GitHub
+### 1. Download ffmpeg assets (required — run once)
+
+```bash
+node scripts/download-ffmpeg.js
+```
+
+This downloads three files (~30 MB total) into `public/ffmpeg/`.
+Commit them along with the rest of the project — Vercel needs them at build time.
+
+### 2. Push to GitHub
 
 ```bash
 git init
