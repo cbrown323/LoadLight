@@ -9,7 +9,7 @@
 }
 
 .header {
-  padding: 12px 14px 8px;
+  padding: 8px 10px 8px 14px;
   font-size: 10px;
   font-weight: 600;
   color: var(--text-muted);
@@ -17,7 +17,7 @@
   text-transform: uppercase;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
@@ -37,7 +37,7 @@
   margin: 0 10px 6px;
   border: 1.5px dashed var(--border-cyan);
   border-radius: var(--radius-lg);
-  padding: 14px 10px;
+  padding: 10px;
   text-align: center;
   background: var(--cyan-glow);
   cursor: pointer;
@@ -221,3 +221,18 @@
   transition: border-color 0.15s;
 }
 .presetSelect:focus { border-color: var(--border-cyan); }
+
+.headerLabel { font-size: 10px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.8px; text-transform: uppercase; }
+.headerActions { display: flex; gap: 5px; margin-left: auto; }
+.addBtn {
+  padding: 3px 9px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--border-cyan);
+  border-radius: var(--radius);
+  color: var(--cyan);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.addBtn:hover { background: var(--cyan-glow); }

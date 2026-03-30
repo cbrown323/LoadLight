@@ -192,6 +192,8 @@ const useStore = create((set, get) => ({
   generatePoster:  true,
   exportAs:        'zip',
   generateSnippet: false,
+  generateAiMax:   false,
+  namingPattern:   '{name}-{width}.{ext}',
   showAdvanced:    false,
   projectName:     'Untitled Batch',
   viewMode:        'split',
@@ -212,6 +214,8 @@ const useStore = create((set, get) => ({
   setGeneratePoster: (v) => set({ generatePoster: v }),
   setExportAs:       (v) => set({ exportAs: v }),
   setGenerateSnippet:(v) => set({ generateSnippet: v }),
+  setGenerateAiMax:  (v) => set({ generateAiMax: v }),
+  setNamingPattern:  (v) => set({ namingPattern: v }),
   setShowAdvanced:   (v) => set({ showAdvanced: v }),
   setProjectName:    (v) => set({ projectName: v }),
   setViewMode:       (v) => set({ viewMode: v }),
@@ -240,7 +244,7 @@ const useStore = create((set, get) => ({
   saveCurrentPreset: (name) => {
     const s = get()
     const ok = savePreset(name, {
-      format: s.format, quality: s.quality,
+      format: s.format, quality: s.quality, namingPattern: s.namingPattern,
       responsiveMode: s.responsiveMode, breakpoints: s.breakpoints,
       advResolution: s.advResolution, advBitrate: s.advBitrate, advFps: s.advFps,
       generateSnippet: s.generateSnippet, generatePoster: s.generatePoster,
@@ -264,6 +268,7 @@ const useStore = create((set, get) => ({
       generateSnippet: p.generateSnippet ?? false,
       generatePoster:  p.generatePoster  ?? true,
       exportAs:        p.exportAs        ?? 'zip',
+      namingPattern:   p.namingPattern   ?? '{name}-{width}.{ext}',
     })
     get().triggerPreviewRefresh()
     return true
@@ -288,7 +293,7 @@ const useStore = create((set, get) => ({
 
     const {
       files, format, quality, smartFormat, breakpoints, responsiveMode,
-      generateSnippet, generatePoster, exportAs, projectName,
+      generateSnippet, generateAiMax, generatePoster, exportAs, projectName,
       setFileStatus, setFileRealSizes, appendLog,
       advResolution, advBitrate, advFps,
     } = state
@@ -311,7 +316,7 @@ const useStore = create((set, get) => ({
         files, format, quality, smartFormat, breakpointWidths,
         useResponsive, resolutionPct: advResolution || 100,
         fps: advFps || 0, bitrate: advBitrate || 0,
-        generateSnippet, generatePoster, exportAs, projectName,
+        generateSnippet, generateAiMax, generatePoster, exportAs, projectName,
 
         onFileStart:    (id) => { setFileStatus(id, 'processing'); appendLog(`Starting ${files.find((f) => f.id === id)?.file.name}…`) },
         onFileProgress: (id, pct) => { perFile[id] = pct; recalcProgress() },

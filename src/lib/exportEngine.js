@@ -1,34 +1,43 @@
 /**
  * exportEngine.js — full export pipeline
- * Handles: ZIP bundling, individual file download, poster frames,
- * HTML snippets, AVIF fallback, smart format selection, upscale guard
+ * Handles: ZIP/individual download, poster frames, HTML snippet (combined),
+ * AI Max snippet (single file for all assets), AVIF fallback, upscale guard
  */
 import JSZip from 'jszip'
+import { buildAiMaxSnippet } from './aiMaxGenerator.js'
 import { encodeImage, resolveFormat } from './imageEncoder.js'
 import { encodeVideo } from './videoEncoder.js'
 import { resolveWithFallback } from './formatSupport.js'
 
-function buildSnippet(baseName, fmt, breakpoints) {
-  const ext    = fmt === 'jpeg' ? 'jpg' : fmt
-  const sorted = [...breakpoints].sort((a, b) => a.w - b.w)
-  const largest = [...breakpoints].sort((a, b) => b.w - a.w)[0]
+// ── Combined HTML snippet for ALL files ───────────────────
+function buildCombinedSnippet(fileResults, format, breakpointWidths, useResponsive) {
+  const lines = []
+  fileResults.forEach(({ fo, resolvedFmt, safeWidths }) => {
+    const isVideo = fo.file.type.startsWith('video/') || fo.file.name.toLowerCase().endsWith('.gif')
+    const name    = fo.file.name.replace(/\.[^.]+$/, '')
+    const fmt     = resolvedFmt
 
-  if (fmt === 'mp4' || fmt === 'webm' || fmt === 'gif') {
-    const lines = ['<video controls playsinline>']
-    sorted.forEach((bp) =>
-      lines.push(`  <source src="${baseName}-${bp.w}.${ext}" media="(max-width: ${bp.w}px)">`)
-    )
-    if (largest) lines.push(`  <source src="${baseName}-${largest.w}.${ext}">`)
-    lines.push('</video>')
-    return lines.join('\n')
-  }
-
-  const lines = ['<picture>']
-  sorted.forEach((bp) =>
-    lines.push(`  <source srcset="${baseName}-${bp.w}.${ext}" media="(max-width: ${bp.w}px)">`)
-  )
-  if (largest) lines.push(`  <img src="${baseName}-${largest.w}.${ext}" alt="" loading="lazy">`)
-  lines.push('</picture>')
+    if (isVideo) {
+      lines.push('<video controls playsinline>')
+      if (useResponsive && safeWidths.length > 0) {
+        const sorted = [...safeWidths].sort((a, b) => a - b)
+        sorted.forEach((w) => lines.push(`  <source src="${name}-${w}.${fmt}" media="(max-width: ${w}px)">`))
+      }
+      lines.push(`  <source src="${name}.${fmt}">`)
+      lines.push('</video>')
+    } else {
+      if (useResponsive && safeWidths.length > 0) {
+        const sorted  = [...safeWidths].sort((a, b) => a - b)
+        const largest = [...safeWidths].sort((a, b) => b - a)[0]
+        lines.push('<picture>')
+        sorted.forEach((w) => lines.push(`  <source srcset="${name}-${w}.${fmt}" media="(max-width: ${w}px)">`))
+        lines.push(`  <img src="${name}-${largest}.${fmt}" alt="" loading="lazy">`)
+        lines.push('</picture>')
+      } else {
+        lines.push(`<img src="${name}.${fmt}" alt="" loading="lazy">`)
+      }
+    }
+  })
   return lines.join('\n')
 }
 
@@ -48,7 +57,6 @@ async function extractPosterFrame(file) {
   })
 }
 
-// Download a single blob immediately
 function downloadBlob(blob, filename) {
   const url  = URL.createObjectURL(blob)
   const link = document.createElement('a')
@@ -62,25 +70,27 @@ export async function runExport(params) {
     files,
     format,
     quality,
-    smartFormat       = true,
-    breakpointWidths  = [],
-    useResponsive     = false,
-    resolutionPct     = 100,
-    fps               = 0,
-    bitrate           = 0,
-    generateSnippet   = false,
-    generatePoster    = false,
-    exportAs          = 'zip',          // 'zip' | 'individual'
-    projectName       = 'loadlight-export',
-    onFileStart       = () => {},
-    onFileProgress    = () => {},
-    onFileDone        = () => {},
-    onFileError       = () => {},
-    onLog             = () => {},
+    smartFormat      = true,
+    breakpointWidths = [],
+    useResponsive    = false,
+    resolutionPct    = 100,
+    fps              = 0,
+    bitrate          = 0,
+    generateSnippet  = false,
+    generateAiMax    = false,
+    generatePoster   = false,
+    exportAs         = 'zip',
+    projectName      = 'loadlight-export',
+    onFileStart      = () => {},
+    onFileProgress   = () => {},
+    onFileDone       = () => {},
+    onFileError      = () => {},
+    onLog            = () => {},
   } = params
 
-  const zip    = new JSZip()
-  const widths = useResponsive ? breakpointWidths : []
+  const zip        = new JSZip()
+  const widths     = useResponsive ? breakpointWidths : []
+  const fileResults = []  // collect for combined snippet generation
 
   for (const fo of files) {
     const { file, id } = fo
@@ -90,12 +100,10 @@ export async function runExport(params) {
       const isGif   = file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif'
       const isVideo = file.type.startsWith('video/')
 
-      // Smart format: pick best format for file type if enabled
       let rawFmt = resolveFormat(file, format)
       if (smartFormat && format === 'auto') {
-        if (isGif)   rawFmt = 'mp4'
-        else if (isVideo) rawFmt = 'mp4'
-        else if (file.type === 'image/png' && file.size < 200000) rawFmt = 'png' // keep small PNGs lossless
+        if (isGif || isVideo) rawFmt = 'mp4'
+        else if (file.type === 'image/png' && file.size < 200000) rawFmt = 'png'
         else rawFmt = 'webp'
       }
 
@@ -104,11 +112,9 @@ export async function runExport(params) {
         onLog(`⚠ ${rawFmt.toUpperCase()} not supported — using ${resolvedFmt.toUpperCase()}`)
 
       const needsFFmpeg = isVideo || isGif || resolvedFmt === 'mp4' || resolvedFmt === 'webm' || resolvedFmt === 'gif'
-
-      // Filter out breakpoints that would upscale the source
-      const srcW          = fo.width || 99999
-      const safeWidths    = widths.filter((w) => w <= srcW)
-      const skipped       = widths.filter((w) => w >  srcW)
+      const srcW        = fo.width || 99999
+      const safeWidths  = widths.filter((w) => w <= srcW)
+      const skipped     = widths.filter((w) => w > srcW)
       if (skipped.length) onLog(`⚠ Skipping ${skipped.join(', ')}px (would upscale ${file.name})`)
 
       let outputs
@@ -127,11 +133,8 @@ export async function runExport(params) {
 
       const realSizes = []
       for (const out of outputs) {
-        if (exportAs === 'individual') {
-          downloadBlob(out.blob, out.filename)
-        } else {
-          zip.file(out.filename, out.blob)
-        }
+        if (exportAs === 'individual') downloadBlob(out.blob, out.filename)
+        else zip.file(out.filename, out.blob)
         realSizes.push({ filename: out.filename, size: out.blob.size, width: out.width })
       }
 
@@ -147,20 +150,42 @@ export async function runExport(params) {
         }
       }
 
-      // HTML snippet
-      if (generateSnippet && safeWidths.length > 0) {
-        const baseName = file.name.replace(/\.[^.]+$/, '')
-        const snippet  = buildSnippet(baseName, resolvedFmt, safeWidths.map((w) => ({ w })))
-        const snipName = `${baseName}.html`
-        if (exportAs === 'individual') downloadBlob(new Blob([snippet], { type: 'text/html' }), snipName)
-        else zip.file(snipName, snippet)
-        onLog(`✓ Snippet: ${snipName}`)
-      }
+      // Track for combined snippets
+      fileResults.push({ fo, resolvedFmt, safeWidths })
 
       onFileDone({ id, realSizes })
     } catch (err) {
       console.error(`Export failed for ${file.name}:`, err)
       onFileError(id, err)
+    }
+  }
+
+  // ── Combined HTML snippet — ONE file for all assets ──────
+  if (generateSnippet && fileResults.length > 0) {
+    onLog('Building HTML snippet…')
+    const snippet = buildCombinedSnippet(fileResults, format, breakpointWidths, useResponsive)
+    const snipBlob = new Blob([snippet], { type: 'text/html' })
+    if (exportAs === 'individual') downloadBlob(snipBlob, 'loadlight-snippet.html')
+    else zip.file('loadlight-snippet.html', snippet)
+    onLog('✓ Snippet: loadlight-snippet.html')
+  }
+
+  // ── AI Max snippet — ONE file for all assets ─────────────
+  if (generateAiMax && fileResults.length > 0) {
+    onLog('Building AI Max snippet…')
+    try {
+      const aiSnippet = await buildAiMaxSnippet(files, {
+        format,
+        breakpoints: breakpointWidths.map((w) => ({ w })),
+        responsiveMode: useResponsive ? 'standard' : 'none',
+        withPalette: true,
+      })
+      const aiBlob = new Blob([aiSnippet], { type: 'text/html' })
+      if (exportAs === 'individual') downloadBlob(aiBlob, 'loadlight-ai-max.html')
+      else zip.file('loadlight-ai-max.html', aiSnippet)
+      onLog('✓ AI Max: loadlight-ai-max.html')
+    } catch (err) {
+      onLog(`⚠ AI Max failed: ${err.message}`)
     }
   }
 

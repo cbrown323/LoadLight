@@ -256,3 +256,79 @@
   padding: 1px 4px;
   margin-left: 3px;
 }
+
+/* Editable naming pattern */
+.namingInput {
+  font-family: monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  outline: none;
+  width: 152px;
+  transition: border-color 0.15s;
+}
+.namingInput:focus { border-color: var(--border-cyan); color: var(--text-primary); }
+
+/* Snippet preview — fixed 7-line height, scrollable */
+.snippetPreview {
+  margin-top: 8px;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-family: monospace;
+  font-size: 9px;
+  color: #7dd3fc;
+  line-height: 1.6;
+  overflow-y: auto;
+  overflow-x: hidden;
+  white-space: pre-wrap;
+  word-break: break-all;
+  height: calc(9px * 1.6 * 7 + 16px); /* exactly 7 lines */
+  resize: none;
+}
+
+/* AI Max tooltip */
+.aiMaxTooltip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  font-size: 9px;
+  color: var(--text-muted);
+  cursor: help;
+  margin-left: 5px;
+  position: relative;
+  vertical-align: middle;
+  transition: border-color 0.15s, color 0.15s;
+}
+.aiMaxTooltip:hover { border-color: var(--border-cyan); color: var(--cyan); }
+.aiMaxTooltip::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  width: 220px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-cyan);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  white-space: normal;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 50;
+  font-family: var(--font-sans);
+  font-weight: 400;
+}
+.aiMaxTooltip:hover::after { opacity: 1; }

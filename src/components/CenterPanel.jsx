@@ -263,7 +263,6 @@ export default function CenterPanel() {
         {!fo && (
           <div className={s.emptyCenter}>
             <span className={s.noIcon}>🖼</span>
-            <span>Add files to begin</span>
           </div>
         )}
       </div>
@@ -289,7 +288,7 @@ export default function CenterPanel() {
           onClick={() => setLoopPlayback(!loopPlayback)} title="Toggle loop (L)">
           ↻ Loop
         </button>
-        <span className={s.kbHint} title="Space: play/pause · ←→: seek · L: loop">⌨</span>
+
       </div>
     </section>
   )

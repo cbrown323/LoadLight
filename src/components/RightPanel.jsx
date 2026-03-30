@@ -1,9 +1,10 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import useStore, { getExt, qualityZone } from '../store/useStore'
+import { buildAiMaxSnippet } from '../lib/aiMaxGenerator.js'
 import Toggle from './Toggle'
 import s from './RightPanel.module.css'
 
-const FORMATS    = ['Auto ✦', 'WebP', 'AVIF', 'JPG', 'PNG', 'MP4', 'WebM', 'GIF']
+const FORMATS     = ['Auto ✦', 'WebP', 'AVIF', 'JPG', 'PNG', 'MP4', 'WebM', 'GIF']
 const FORMAT_KEYS = ['auto', 'webp', 'avif', 'jpg', 'png', 'mp4', 'webm', 'gif']
 
 function Section({ title, action, actionLabel, children }) {
@@ -16,6 +17,43 @@ function Section({ title, action, actionLabel, children }) {
       {children}
     </div>
   )
+}
+
+// Combined HTML snippet for ALL files
+function buildHtmlSnippet(files, format, breakpoints, responsiveMode) {
+  const useResponsive = responsiveMode !== 'none' && breakpoints.length > 0
+  const lines = []
+
+  files.forEach((fo) => {
+    const isVideo = fo.file.type.startsWith('video/') || fo.file.name.toLowerCase().endsWith('.gif')
+    const name    = fo.file.name.replace(/\.[^.]+$/, '')
+    const fmt     = format === 'auto' ? (isVideo ? 'mp4' : 'webp') : format
+
+    if (isVideo) {
+      lines.push(`<video controls playsinline>`)
+      if (useResponsive) {
+        const sorted = [...breakpoints].sort((a, b) => a.w - b.w)
+        sorted.forEach((bp) => lines.push(`  <source src="${name}-${bp.w}.${fmt}" media="(max-width: ${bp.w}px)">`))
+      }
+      lines.push(`  <source src="${name}.${fmt}">`)
+      lines.push(`</video>`)
+    } else {
+      if (useResponsive && breakpoints.length > 0) {
+        const sorted  = [...breakpoints].sort((a, b) => a.w - b.w)
+        const largest = [...breakpoints].sort((a, b) => b.w - a.w)[0]
+        lines.push(`<picture>`)
+        sorted.forEach((bp) => {
+          lines.push(`  <source srcset="${name}-${bp.w}.${fmt}" media="(max-width: ${bp.w}px)">`)
+        })
+        lines.push(`  <img src="${name}-${largest.w}.${fmt}" alt="" loading="lazy">`)
+        lines.push(`</picture>`)
+      } else {
+        lines.push(`<img src="${name}.${fmt}" alt="" loading="lazy">`)
+      }
+    }
+  })
+
+  return lines.join('\n')
 }
 
 export default function RightPanel() {
@@ -31,28 +69,32 @@ export default function RightPanel() {
     generatePoster, setGeneratePoster,
     exportAs, setExportAs,
     generateSnippet, setGenerateSnippet,
+    generateAiMax, setGenerateAiMax,
+    namingPattern, setNamingPattern,
     showAdvanced, setShowAdvanced,
     files, activeIdx,
   } = useStore()
 
-  const fo       = files[activeIdx]
-  const baseName = fo ? fo.file.name.replace(/\.[^.]+$/, '') : 'file'
-  const srcW     = fo?.width || 0
-  const outExt   = format === 'auto' ? 'webp' : format
-  const zone     = qualityZone(quality)
+  const [aiMaxPreview, setAiMaxPreview] = useState('')
+  const [aiMaxLoading, setAiMaxLoading] = useState(false)
 
-  function buildSnippet() {
-    const sorted  = [...breakpoints].sort((a, b) => a.w - b.w)
-    const largest = [...breakpoints].sort((a, b) => b.w - a.w)[0]
-    const lines   = ['<picture>']
-    sorted.forEach((bp) => {
-      lines.push(`  <source srcset="${baseName}-${bp.w}.${outExt}"`)
-      lines.push(`          media="(max-width: ${bp.w}px)">`)
-    })
-    if (largest) lines.push(`  <img src="${baseName}-${largest.w}.${outExt}" alt="">`)
-    lines.push('</picture>')
-    return lines.join('\n')
-  }
+  const fo      = files[activeIdx]
+  const srcW    = fo?.width || 0
+  const outExt  = format === 'auto' ? 'webp' : format
+  const zone    = qualityZone(quality)
+
+  // Rebuild AI Max preview whenever toggle turns on or files/settings change
+  useEffect(() => {
+    if (!generateAiMax || files.length === 0) { setAiMaxPreview(''); return }
+    setAiMaxLoading(true)
+    buildAiMaxSnippet(files, { format, breakpoints, responsiveMode, withPalette: true })
+      .then((s) => { setAiMaxPreview(s); setAiMaxLoading(false) })
+      .catch(() => setAiMaxLoading(false))
+  }, [generateAiMax, files, format, breakpoints, responsiveMode])
+
+  const htmlSnippet = generateSnippet && files.length > 0
+    ? buildHtmlSnippet(files, format, breakpoints, responsiveMode)
+    : ''
 
   function handleAddBreakpoint() {
     const w = window.prompt('Breakpoint width (px):', '1024')
@@ -68,11 +110,9 @@ export default function RightPanel() {
       <Section title="Output Format">
         <div className={s.formatGrid}>
           {FORMATS.map((label, i) => (
-            <button
-              key={label}
+            <button key={label}
               className={`${s.fmtBtn} ${format === FORMAT_KEYS[i] ? s.selected : ''}`}
-              onClick={() => setFormat(FORMAT_KEYS[i])}
-            >{label}</button>
+              onClick={() => setFormat(FORMAT_KEYS[i])}>{label}</button>
           ))}
         </div>
         <div className={s.row}>
@@ -82,45 +122,32 @@ export default function RightPanel() {
       </Section>
 
       {/* ── QUALITY ── */}
-      <Section
-        title="Quality"
+      <Section title="Quality"
         action={() => setShowAdvanced(!showAdvanced)}
-        actionLabel={showAdvanced ? 'Advanced ▴' : 'Advanced ▾'}
-      >
+        actionLabel={showAdvanced ? 'Advanced ▴' : 'Advanced ▾'}>
         <div className={s.qualityLabels}>
           <span>Aggressive</span><span>Optimized</span><span>Balanced</span><span>High</span>
         </div>
-        <input
-          type="range" min={0} max={100} step={1} value={quality}
+        <input type="range" min={0} max={100} step={1} value={quality}
           className={s.qSlider}
           style={{ background: `linear-gradient(to right, var(--cyan) ${quality}%, var(--bg-surface) ${quality}%)` }}
-          onChange={(e) => setQuality(Number(e.target.value))}
-        />
+          onChange={(e) => setQuality(Number(e.target.value))} />
         <div className={s.qualityReadout}>
           <span className={s.qValue}>{quality}</span>
           <span className={s.qZone} style={{ color: zone.color, borderColor: zone.color, background: zone.bg }}>
             {zone.label}
           </span>
         </div>
-
         {showAdvanced && (
           <div className={s.advGrid}>
-            <div className={s.advField}>
-              <label className={s.advLabel}>Resolution %</label>
-              <input className={s.advInput} type="number" value={advResolution} min={10} max={200} onChange={(e) => setAdvResolution(e.target.value)} />
-            </div>
-            <div className={s.advField}>
-              <label className={s.advLabel}>Bitrate kbps (0=auto)</label>
-              <input className={s.advInput} type="number" value={advBitrate} min={0} onChange={(e) => setAdvBitrate(e.target.value)} />
-            </div>
-            <div className={s.advField}>
-              <label className={s.advLabel}>FPS (0=source)</label>
-              <input className={s.advInput} type="number" value={advFps} min={0} max={120} onChange={(e) => setAdvFps(e.target.value)} />
-            </div>
-            <div className={s.advField}>
-              <label className={s.advLabel}>Color depth</label>
-              <input className={s.advInput} type="number" defaultValue={24} />
-            </div>
+            <div className={s.advField}><label className={s.advLabel}>Resolution %</label>
+              <input className={s.advInput} type="number" value={advResolution} min={10} max={200} onChange={(e) => setAdvResolution(e.target.value)} /></div>
+            <div className={s.advField}><label className={s.advLabel}>Bitrate kbps (0=auto)</label>
+              <input className={s.advInput} type="number" value={advBitrate} min={0} onChange={(e) => setAdvBitrate(e.target.value)} /></div>
+            <div className={s.advField}><label className={s.advLabel}>FPS (0=source)</label>
+              <input className={s.advInput} type="number" value={advFps} min={0} max={120} onChange={(e) => setAdvFps(e.target.value)} /></div>
+            <div className={s.advField}><label className={s.advLabel}>Color depth</label>
+              <input className={s.advInput} type="number" defaultValue={24} /></div>
           </div>
         )}
       </Section>
@@ -133,7 +160,6 @@ export default function RightPanel() {
           <option value="mobile">Mobile First</option>
           <option value="custom">Custom</option>
         </select>
-
         {responsiveMode !== 'none' && (
           <>
             <div className={s.bpList}>
@@ -143,7 +169,9 @@ export default function RightPanel() {
                   <div key={i} className={`${s.bpItem} ${willUpscale ? s.bpWarn : ''}`}>
                     <div className={`${s.bpDot} ${willUpscale ? s.bpDotWarn : ''}`} />
                     <span className={s.bpName}>{bp.name}</span>
-                    <span className={s.bpFile}>{baseName}-{bp.w}.{outExt}</span>
+                    <span className={s.bpFile}>
+                      {(files[activeIdx]?.file.name.replace(/\.[^.]+$/,'') || 'file')}-{bp.w}.{outExt}
+                    </span>
                     <span className={s.bpSize}>{bp.w}px {willUpscale && <span className={s.upscaleTag}>↑ skip</span>}</span>
                     <button className={s.bpRemove} onClick={() => removeBreakpoint(i)}>✕</button>
                   </div>
@@ -153,7 +181,6 @@ export default function RightPanel() {
             <button className={s.addBp} onClick={handleAddBreakpoint}>+ Add Breakpoint</button>
           </>
         )}
-
         <div className={s.row} style={{ marginTop: 10 }}>
           <span className={s.toggleLabel}>Generate poster image</span>
           <Toggle on={generatePoster} onChange={setGeneratePoster} />
@@ -162,10 +189,18 @@ export default function RightPanel() {
 
       {/* ── OUTPUT SETTINGS ── */}
       <Section title="Output Settings">
+
+        {/* Editable naming pattern */}
         <div className={s.outputRow}>
           <span className={s.outputLabel}>Naming pattern</span>
-          <code className={s.outputCode}>{'{name}-{width}.{ext}'}</code>
+          <input
+            className={s.namingInput}
+            value={namingPattern}
+            onChange={(e) => setNamingPattern(e.target.value)}
+            spellCheck={false}
+          />
         </div>
+
         <div className={s.outputRow}>
           <span className={s.outputLabel}>Export as</span>
           <select className={s.outputSelect} value={exportAs} onChange={(e) => setExportAs(e.target.value)}>
@@ -173,13 +208,31 @@ export default function RightPanel() {
             <option value="individual">Individual Files</option>
           </select>
         </div>
+
+        {/* HTML Snippet */}
         <div className={s.row}>
           <span className={s.toggleLabel}>Generate HTML snippet</span>
           <Toggle on={generateSnippet} onChange={setGenerateSnippet} />
         </div>
-        {generateSnippet && <pre className={s.snippetPreview}>{buildSnippet()}</pre>}
-      </Section>
+        {generateSnippet && (
+          <pre className={s.snippetPreview}>{htmlSnippet || '<!-- add files to preview -->'}</pre>
+        )}
 
+        {/* AI Max */}
+        <div className={s.row} style={{ marginTop: 10 }}>
+          <span className={s.toggleLabel}>
+            AI Max
+            <span className={s.aiMaxTooltip} data-tip="Exports a single token-optimized JSON structure for all assets. Schema-mapped rows, responsive sizes as nested arrays, dominant color palettes — designed to minimize LLM token usage when working with large media batches.">?</span>
+          </span>
+          <Toggle on={generateAiMax} onChange={setGenerateAiMax} />
+        </div>
+        {generateAiMax && (
+          <pre className={s.snippetPreview}>
+            {aiMaxLoading ? '// Building AI Max snippet…' : (aiMaxPreview || '<!-- add files to preview -->')}
+          </pre>
+        )}
+
+      </Section>
     </aside>
   )
 }

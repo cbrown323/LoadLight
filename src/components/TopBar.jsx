@@ -25,21 +25,14 @@ function PresetModal({ mode, onClose }) {
     <div className={s.modalBackdrop} onClick={onClose}>
       <div className={s.modal} onClick={(e) => e.stopPropagation()}>
         <div className={s.modalTitle}>{mode === 'save' ? 'Save Preset' : 'Load Preset'}</div>
-
         {mode === 'save' && (
           <div className={s.modalRow}>
-            <input
-              ref={inputRef}
-              className={s.modalInput}
-              placeholder="Preset name…"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSave()}
-            />
+            <input ref={inputRef} className={s.modalInput} placeholder="Preset name…"
+              value={name} onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSave()} />
             <button className={s.modalBtn} onClick={handleSave}>Save</button>
           </div>
         )}
-
         {savedPresets.length > 0 ? (
           <div className={s.presetList}>
             {savedPresets.map((p) => (
@@ -57,7 +50,6 @@ function PresetModal({ mode, onClose }) {
         ) : (
           <div className={s.presetEmpty}>No saved presets yet</div>
         )}
-
         {msg && <div className={s.modalMsg}>{msg}</div>}
         <button className={s.modalClose} onClick={onClose}>Close</button>
       </div>
@@ -67,7 +59,7 @@ function PresetModal({ mode, onClose }) {
 
 export default function TopBar() {
   const { projectName, setProjectName, viewMode, setViewMode } = useStore()
-  const [modal, setModal] = useState(null) // 'save' | 'load' | null
+  const [modal, setModal] = useState(null)
 
   return (
     <>
@@ -75,24 +67,19 @@ export default function TopBar() {
         <div className={s.logo}>
           <div className={s.logoIcon}>LL</div>
           LoadLight
+          <span className={s.version}>v1.3</span>
         </div>
 
-        <input
-          className={s.projectName}
-          value={projectName}
-          onChange={(e) => setProjectName(e.target.value)}
-          spellCheck={false}
-        />
+        <input className={s.projectName} value={projectName}
+          onChange={(e) => setProjectName(e.target.value)} spellCheck={false} />
 
         <div className={s.spacer} />
 
         <div className={s.viewToggle}>
           {['before', 'split', 'after'].map((m) => (
-            <button
-              key={m}
+            <button key={m}
               className={`${s.vtBtn} ${viewMode === m ? s.active : ''}`}
-              onClick={() => setViewMode(m)}
-            >
+              onClick={() => setViewMode(m)}>
               {m.charAt(0).toUpperCase() + m.slice(1)}
             </button>
           ))}
@@ -102,7 +89,7 @@ export default function TopBar() {
 
         <button className={s.topAction} onClick={() => setModal('save')}>Save Preset</button>
         <button className={s.topAction} onClick={() => setModal('load')}>Load Preset</button>
-        <button className={s.iconBtn} title="Settings">⚙</button>
+        {/* Settings button removed — fix #2 */}
       </header>
 
       {modal && <PresetModal mode={modal} onClose={() => setModal(null)} />}

@@ -15,10 +15,7 @@ function FileBadge({ ext }) {
 function FileItem({ fo, index, isActive }) {
   const { setActiveIdx, removeFile, duplicateFile } = useStore()
   return (
-    <div
-      className={`${s.fileItem} ${isActive ? s.active : ''}`}
-      onClick={() => setActiveIdx(index)}
-    >
+    <div className={`${s.fileItem} ${isActive ? s.active : ''}`} onClick={() => setActiveIdx(index)}>
       <div className={s.thumb}>
         {fo.thumbUrl
           ? <img src={fo.thumbUrl} alt="" />
@@ -33,16 +30,10 @@ function FileItem({ fo, index, isActive }) {
         </div>
       </div>
       <div className={s.actions}>
-        <button
-          className={`${s.actionBtn} ${s.dup}`}
-          title="Duplicate"
-          onClick={(e) => { e.stopPropagation(); duplicateFile(fo.id) }}
-        >⧉</button>
-        <button
-          className={s.actionBtn}
-          title="Remove"
-          onClick={(e) => { e.stopPropagation(); removeFile(fo.id) }}
-        >✕</button>
+        <button className={`${s.actionBtn} ${s.dup}`} title="Duplicate"
+          onClick={(e) => { e.stopPropagation(); duplicateFile(fo.id) }}>⧉</button>
+        <button className={s.actionBtn} title="Remove"
+          onClick={(e) => { e.stopPropagation(); removeFile(fo.id) }}>✕</button>
       </div>
     </div>
   )
@@ -50,61 +41,45 @@ function FileItem({ fo, index, isActive }) {
 
 export default function LeftPanel() {
   const { files, activeIdx, addFiles, applyPreset } = useStore()
-  const inputRef = useRef()
+  const inputRef  = useRef()
   const folderRef = useRef()
   const [dragging, setDragging] = React.useState(false)
 
   const handleDrop = useCallback((e) => {
-    e.preventDefault()
-    setDragging(false)
-    addFiles(e.dataTransfer.files)
+    e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files)
   }, [addFiles])
 
-  const handleDragOver = (e) => { e.preventDefault(); setDragging(true) }
-  const handleDragLeave = () => setDragging(false)
-
-  const handleInput = (e) => {
-    addFiles(e.target.files)
-    e.target.value = ''
-  }
+  const handleInput = (e) => { addFiles(e.target.files); e.target.value = '' }
 
   return (
     <aside className={s.panel}>
+
+      {/* Header row — Files label + count + Add button inline */}
       <div className={s.header}>
-        Files
+        <span className={s.headerLabel}>Files</span>
         <span className={s.countBadge}>{files.length}</span>
+        <div className={s.headerActions}>
+          <button className={s.addBtn} onClick={() => inputRef.current.click()}>+ Add</button>
+          <button className={s.addBtn} onClick={() => folderRef.current.click()}>📁</button>
+        </div>
       </div>
 
-      {/* Drop zone */}
+      {/* Hidden file inputs */}
+      <input ref={inputRef} type="file" multiple accept="image/*,video/*,.gif,.webp,.avif"
+        style={{ display: 'none' }} onChange={handleInput} />
+      <input ref={folderRef} type="file" webkitdirectory="" multiple
+        style={{ display: 'none' }} onChange={handleInput} />
+
+      {/* Drop zone — no buttons inside, just the drop target */}
       <div
         className={`${s.dropZone} ${dragging ? s.dragOver : ''}`}
         onDrop={handleDrop}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
+        onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+        onDragLeave={() => setDragging(false)}
         onClick={() => inputRef.current.click()}
       >
         <div className={s.dropIcon}>⬆</div>
         <div className={s.dropText}>Drop images, GIFs or video here</div>
-        <div className={s.dropBtns}>
-          <span className={s.dropBtn}>+ Add Files</span>
-          <span className={s.folderBtn}>📁 Folder</span>
-        </div>
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept="image/*,video/*,.gif,.webp,.avif"
-          style={{ display: 'none' }}
-          onChange={handleInput}
-        />
-        <input
-          ref={folderRef}
-          type="file"
-          webkitdirectory=""
-          multiple
-          style={{ display: 'none' }}
-          onChange={handleInput}
-        />
       </div>
 
       {/* File list */}
