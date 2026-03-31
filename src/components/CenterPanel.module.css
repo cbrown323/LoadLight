@@ -276,3 +276,16 @@
   z-index: 5;
 }
 .reEncodeBtn:hover { background: var(--cyan-glow); }
+
+.encError {
+  font-size: 10px;
+  color: var(--red);
+  background: rgba(239,68,68,0.08);
+  border: 1px solid rgba(239,68,68,0.25);
+  border-radius: var(--radius);
+  padding: 5px 10px;
+  text-align: center;
+  max-width: 240px;
+  line-height: 1.5;
+  word-break: break-word;
+}

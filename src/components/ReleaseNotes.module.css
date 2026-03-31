@@ -11,13 +11,12 @@
   border: none;
   padding: 0;
   cursor: pointer;
-  font-size: 13px;
   display: flex;
   align-items: center;
   justify-content: center;
   opacity: 0.5;
   transition: opacity 0.15s;
-  line-height: 1;
+  color: var(--text-secondary);
 }
 .trigger:hover { opacity: 1; }
 

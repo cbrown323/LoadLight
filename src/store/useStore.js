@@ -148,6 +148,7 @@ const useStore = create((set, get) => ({
   videoPreviewLoading: false,
   videoPreviewPct:     0,
   videoPreviewLog:     '',
+  videoPreviewError:   null,
 
   _refreshPreview: (fo) => {
     if (!fo) return
@@ -192,7 +193,7 @@ const useStore = create((set, get) => ({
         fo.file,
         { format: state.format, quality: state.quality, fps: state.advFps },
         (pct) => set({ videoPreviewPct: pct }),
-        (msg) => set({ videoPreviewLog: msg }),
+        (msg) => { set({ videoPreviewLog: msg }); get().appendLog(msg) },
       )
       set((s) => {
         const old = s.files.find((f) => f.id === fo.id)?.afterUrl
@@ -207,7 +208,9 @@ const useStore = create((set, get) => ({
       })
     } catch (err) {
       console.error('Video preview failed:', err)
-      set({ videoPreviewLoading: false, videoPreviewLog: `Error: ${err.message}` })
+      const errMsg = 'Preview failed: ' + err.message
+      get().appendLog('✗ ' + errMsg)
+      set({ videoPreviewLoading: false, videoPreviewError: errMsg, videoPreviewLog: errMsg })
     }
   },
 

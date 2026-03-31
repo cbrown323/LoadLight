@@ -23,7 +23,7 @@ function OrientationTag({ fo }) {
 }
 
 function FileItem({ fo, index, isActive }) {
-  const { setActiveIdx, removeFile, duplicateFile } = useStore()
+  const { setActiveIdx, removeFile } = useStore()
   return (
     <div className={`${s.fileItem} ${isActive ? s.active : ''}`} onClick={() => setActiveIdx(index)}>
       <div className={s.thumb}>
@@ -44,8 +44,6 @@ function FileItem({ fo, index, isActive }) {
         </div>
       </div>
       <div className={s.actions}>
-        <button className={`${s.actionBtn} ${s.dup}`} title="Duplicate"
-          onClick={(e) => { e.stopPropagation(); duplicateFile(fo.id) }}>⧉</button>
         <button className={s.actionBtn} title="Remove"
           onClick={(e) => { e.stopPropagation(); removeFile(fo.id) }}>✕</button>
       </div>

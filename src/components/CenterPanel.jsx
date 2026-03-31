@@ -108,7 +108,7 @@ function StaticPreview({ src, isAfter, loading }) {
 // ─── VideoAfterPlaceholder ────────────────────────────────
 // Shown in the After panel when no video preview has been encoded yet,
 // or while encoding is in progress.
-function VideoAfterPlaceholder({ loading, pct, log, onEncode }) {
+function VideoAfterPlaceholder({ loading, pct, log, error, onEncode }) {
   return (
     <div className={s.videoAfterWrap}>
       {loading ? (
@@ -123,9 +123,13 @@ function VideoAfterPlaceholder({ loading, pct, log, onEncode }) {
         <div className={s.videoAfterIdle}>
           <div className={s.videoAfterIcon}>▶</div>
           <div className={s.videoAfterLabel}>Video preview</div>
-          <div className={s.videoAfterHint}>Encodes a 4s clip at current settings</div>
+          {error ? (
+            <div className={s.encError}>{error}</div>
+          ) : (
+            <div className={s.videoAfterHint}>Encodes a 4s clip at current settings</div>
+          )}
           <button className={s.encodeBtn} onClick={onEncode}>
-            Generate Preview
+            {error ? 'Retry' : 'Generate Preview'}
           </button>
         </div>
       )}
@@ -139,7 +143,7 @@ export default function CenterPanel() {
     files, activeIdx, viewMode, format, quality,
     loopPlayback, setLoopPlayback,
     previewLoading,
-    videoPreviewLoading, videoPreviewPct, videoPreviewLog,
+    videoPreviewLoading, videoPreviewPct, videoPreviewLog, videoPreviewError,
     encodeVideoPreview,
   } = useStore()
 
@@ -236,6 +240,7 @@ export default function CenterPanel() {
                     loading={videoPreviewLoading}
                     pct={videoPreviewPct}
                     log={videoPreviewLog}
+                    error={videoPreviewError}
                     onEncode={encodeVideoPreview}
                   />
             ) : (

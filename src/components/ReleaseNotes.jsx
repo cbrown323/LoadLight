@@ -56,7 +56,12 @@ export default function ReleaseNotes() {
   return (
     <div className={s.wrap} ref={ref}>
       <button className={s.trigger} onClick={() => setOpen((o) => !o)} title="Release notes">
-        📋
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="1" y="1" width="11" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none"/>
+          <line x1="3" y1="4" x2="10" y2="4" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round"/>
+          <line x1="3" y1="6.5" x2="10" y2="6.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round"/>
+          <line x1="3" y1="9" x2="7" y2="9" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round"/>
+        </svg>
       </button>
 
       {open && (
