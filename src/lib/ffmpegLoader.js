@@ -9,7 +9,8 @@
  *   - ffmpeg-core.js   (~114 KB)
  *   - ffmpeg-core.wasm (~30 MB)
  *
- * @ffmpeg/ffmpeg and @ffmpeg/util are installed via npm and bundled by Vite.
+ * Log listener is stored in a mutable ref so batch exports
+ * can update it per-file without re-initialising ffmpeg.
  */
 
 import { FFmpeg } from '@ffmpeg/ffmpeg'
@@ -17,33 +18,30 @@ import { toBlobURL, fetchFile } from '@ffmpeg/util'
 
 let _instance    = null
 let _loadPromise = null
+let _onLog       = null   // mutable — updated on every getFFmpeg() call
 
 export async function getFFmpeg(onLog) {
+  // Always update the log listener so batch exports see per-file logs
+  _onLog = onLog
+
   if (_instance)    return _instance
   if (_loadPromise) return _loadPromise
 
   _loadPromise = (async () => {
-    onLog?.('Loading ffmpeg (~30 MB, cached after first run)…')
+    _onLog?.('Loading ffmpeg (~30 MB, cached after first run)…')
 
     const ff = new FFmpeg()
-    if (onLog) ff.on('log', ({ message }) => onLog(`[ffmpeg] ${message}`))
+
+    // Use an indirect reference so the listener always calls the latest _onLog
+    ff.on('log', ({ message }) => _onLog?.(`[ffmpeg] ${message}`))
 
     const baseURL = '/ffmpeg'
-
-    // Convert core files to blob URLs so they work from any origin.
-    // The core.js and core.wasm are the only files we self-host.
-    const coreURL = await toBlobURL(
-      `${baseURL}/ffmpeg-core.js`,
-      'text/javascript'
-    )
-    const wasmURL = await toBlobURL(
-      `${baseURL}/ffmpeg-core.wasm`,
-      'application/wasm'
-    )
+    const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript')
+    const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm')
 
     await ff.load({ coreURL, wasmURL })
 
-    onLog?.('ffmpeg ready ✓')
+    _onLog?.('ffmpeg ready ✓')
     _instance = { ff, fetchFile }
     return _instance
   })()
@@ -55,4 +53,5 @@ export function releaseFFmpeg() {
   if (_instance) { try { _instance.ff.terminate() } catch (_) {} }
   _instance    = null
   _loadPromise = null
+  _onLog       = null
 }

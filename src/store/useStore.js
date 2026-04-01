@@ -149,6 +149,8 @@ const useStore = create((set, get) => ({
   videoPreviewPct:     0,
   videoPreviewLog:     '',
   videoPreviewError:   null,
+  previewStartTime:    0,
+  setPreviewStartTime: (v) => set({ previewStartTime: Number(v) || 0 }),
 
   _refreshPreview: (fo) => {
     if (!fo) return
@@ -186,12 +188,12 @@ const useStore = create((set, get) => ({
     const isVideo = fo.file.type.startsWith('video/') || fo.file.name.toLowerCase().endsWith('.gif')
     if (!isVideo || state.videoPreviewLoading) return
 
-    set({ videoPreviewLoading: true, videoPreviewPct: 0, videoPreviewLog: '' })
+    set({ videoPreviewLoading: true, videoPreviewPct: 0, videoPreviewLog: '', videoPreviewError: null })
 
     try {
       const { url, size } = await encodeVideoPreview(
         fo.file,
-        { format: state.format, quality: state.quality, fps: state.advFps },
+        { format: state.format, quality: state.quality, fps: state.advFps, startTime: state.previewStartTime },
         (pct) => set({ videoPreviewPct: pct }),
         (msg) => { set({ videoPreviewLog: msg }); get().appendLog(msg) },
       )

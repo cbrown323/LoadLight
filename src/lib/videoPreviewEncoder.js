@@ -1,15 +1,14 @@
 /**
  * videoPreviewEncoder.js
- * Absolute minimum ffmpeg args — no -vf filter at all.
- * Trim to 4s, re-encode with libx264, copy audio out.
- * This is the most compatible command possible with ffmpeg-core wasm.
+ * Encodes a short preview clip from a video file using ffmpeg.wasm.
+ * Supports custom start time for user-selected preview range.
  */
 import { getFFmpeg } from './ffmpegLoader.js'
 
 const PREVIEW_DURATION = 4
 
 export async function encodeVideoPreview(file, opts, onProgress, onLog) {
-  const { quality = 72 } = opts
+  const { quality = 72, startTime = 0 } = opts
 
   const isGif     = file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif'
   const inExt     = isGif ? 'gif' : (file.name.split('.').pop().toLowerCase() || 'mp4')
@@ -26,10 +25,11 @@ export async function encodeVideoPreview(file, opts, onProgress, onLog) {
   onProgress?.(20)
 
   const crf = Math.round(38 - (quality / 100) * 16)
+  const ss  = Math.max(0, startTime)
 
-  // Minimal args — no video filter, no preset, no audio.
-  // Works on any input resolution, portrait or landscape.
+  // -ss before -i = fast seek (input seeking), then trim -t seconds
   const args = [
+    '-ss',       String(ss),
     '-i',        inputName,
     '-t',        String(PREVIEW_DURATION),
     '-c:v',      'libx264',
@@ -40,13 +40,18 @@ export async function encodeVideoPreview(file, opts, onProgress, onLog) {
     '-y',        outputName,
   ]
 
-  onLog?.(`Encoding ${PREVIEW_DURATION}s clip (CRF ${crf})…`)
-  await ff.exec(args)
+  onLog?.(`Encoding ${PREVIEW_DURATION}s clip from ${formatTime(ss)} (CRF ${crf})…`)
+  const ret = await ff.exec(args)
+
+  if (ret !== 0) {
+    onLog?.(`⚠ ffmpeg returned exit code ${ret}`)
+  }
+
   onProgress?.(88)
 
   const data = await ff.readFile(outputName)
   if (!data || data.byteLength === 0) {
-    throw new Error('ffmpeg returned empty output. Check browser console for ffmpeg logs.')
+    throw new Error('ffmpeg returned empty output — the selected time range may be past the end of the video.')
   }
 
   const blob = new Blob([data.slice(0)], { type: 'video/mp4' })
@@ -59,4 +64,10 @@ export async function encodeVideoPreview(file, opts, onProgress, onLog) {
   onLog?.(`Done — ${(blob.size / 1024).toFixed(0)} KB`)
 
   return { url, size: blob.size }
+}
+
+function formatTime(s) {
+  const m = Math.floor(s / 60)
+  const sec = Math.floor(s % 60)
+  return `${m}:${String(sec).padStart(2, '0')}`
 }

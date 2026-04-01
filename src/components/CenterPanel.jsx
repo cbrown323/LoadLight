@@ -108,7 +108,21 @@ function StaticPreview({ src, isAfter, loading }) {
 // ─── VideoAfterPlaceholder ────────────────────────────────
 // Shown in the After panel when no video preview has been encoded yet,
 // or while encoding is in progress.
-function VideoAfterPlaceholder({ loading, pct, log, error, onEncode }) {
+function VideoAfterPlaceholder({ loading, pct, log, error, onEncode, startTime, onStartTimeChange, duration, scrubPct }) {
+  const [showRange, setShowRange] = useState(false)
+  const fmt = (sec) => {
+    const m = Math.floor(sec / 60)
+    const s2 = Math.floor(sec % 60)
+    return `${m}:${String(s2).padStart(2, '0')}`
+  }
+
+  const grabFromScrubber = () => {
+    if (duration > 0) {
+      const t = Math.floor((scrubPct / 100) * duration)
+      onStartTimeChange(t)
+    }
+  }
+
   return (
     <div className={s.videoAfterWrap}>
       {loading ? (
@@ -126,8 +140,45 @@ function VideoAfterPlaceholder({ loading, pct, log, error, onEncode }) {
           {error ? (
             <div className={s.encError}>{error}</div>
           ) : (
-            <div className={s.videoAfterHint}>Encodes a 4s clip at current settings</div>
+            <div className={s.videoAfterHint}>
+              Encodes 4s from {fmt(startTime)}
+            </div>
           )}
+
+          {/* Range selection */}
+          <button
+            className={s.rangeToggle}
+            onClick={() => setShowRange((v) => !v)}
+          >
+            {showRange ? '▾ Hide range' : '▸ Choose range'}
+          </button>
+
+          {showRange && (
+            <div className={s.rangePanel}>
+              <div className={s.rangeRow}>
+                <label className={s.rangeLabel}>Start at</label>
+                <input
+                  className={s.rangeInput}
+                  type="number"
+                  min={0}
+                  max={duration > 0 ? Math.floor(duration) : 9999}
+                  step={1}
+                  value={startTime}
+                  onChange={(e) => onStartTimeChange(Number(e.target.value) || 0)}
+                />
+                <span className={s.rangeSec}>s</span>
+              </div>
+              {duration > 0 && (
+                <button className={s.rangeGrab} onClick={grabFromScrubber}>
+                  ⏱ Use scrubber ({fmt(Math.floor((scrubPct / 100) * duration))})
+                </button>
+              )}
+              <div className={s.rangeHint}>
+                Preview: {fmt(startTime)} → {fmt(startTime + 4)}
+              </div>
+            </div>
+          )}
+
           <button className={s.encodeBtn} onClick={onEncode}>
             {error ? 'Retry' : 'Generate Preview'}
           </button>
@@ -145,6 +196,7 @@ export default function CenterPanel() {
     previewLoading,
     videoPreviewLoading, videoPreviewPct, videoPreviewLog, videoPreviewError,
     encodeVideoPreview,
+    previewStartTime, setPreviewStartTime,
   } = useStore()
 
   const [playing,  setPlaying]  = useState(false)
@@ -242,6 +294,10 @@ export default function CenterPanel() {
                     log={videoPreviewLog}
                     error={videoPreviewError}
                     onEncode={encodeVideoPreview}
+                    startTime={previewStartTime}
+                    onStartTimeChange={setPreviewStartTime}
+                    duration={duration}
+                    scrubPct={scrubPct}
                   />
             ) : (
               <StaticPreview src={afterUrl} isAfter={true} loading={previewLoading} />
