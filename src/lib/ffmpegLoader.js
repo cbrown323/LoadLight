@@ -1,22 +1,9 @@
 /**
  * ffmpegLoader.js
  *
- * Loads ALL ffmpeg assets from /ffmpeg/ (public folder, same origin).
- * Uses dynamic import() for the ESM bundles so Vite NEVER bundles them.
- *
- * Why dynamic import instead of static:
- *   import { FFmpeg } from '@ffmpeg/ffmpeg'  ← Vite bundles this, transforms
- *   the internal worker URL, breaks our workerURL override = Worker CORS error.
- *
- *   const { FFmpeg } = await import('/ffmpeg/ffmpeg-esm.js')  ← Vite leaves
- *   this alone at runtime, the file is served as-is from public/, no transforms.
- *
- * Required files in public/ffmpeg/ (run: node scripts/download-ffmpeg.js):
- *   ffmpeg-core.js      ~30 KB
- *   ffmpeg-core.wasm    ~30 MB
- *   worker.js           ~5 KB
- *   ffmpeg-esm.js       ~5 KB
- *   util-esm.js         ~5 KB
+ * Loads ffmpeg from public/ffmpeg/ using dynamic imports with
+ * /* @vite-ignore */ comments so Vite skips analysis entirely.
+ * The files are served as static assets — Rollup must not touch them.
  */
 
 let _instance    = null
@@ -29,14 +16,14 @@ export async function getFFmpeg(onLog) {
   _loadPromise = (async () => {
     onLog?.('Loading ffmpeg (~30 MB, cached after first run)…')
 
-    // Dynamic import from same origin — Vite does NOT transform these
-    const { FFmpeg }               = await import('/ffmpeg/ffmpeg-esm.js')
-    const { fetchFile, toBlobURL } = await import('/ffmpeg/util-esm.js')
+    // @vite-ignore tells Vite/Rollup to skip static analysis of this import.
+    // The files live in public/ffmpeg/ and are served at runtime from the same origin.
+    const { FFmpeg }               = await import(/* @vite-ignore */ '/ffmpeg/ffmpeg-esm.js')
+    const { fetchFile, toBlobURL } = await import(/* @vite-ignore */ '/ffmpeg/util-esm.js')
 
     const ff = new FFmpeg()
     if (onLog) ff.on('log', ({ message }) => onLog(`[ffmpeg] ${message}`))
 
-    // All three core assets as blob URLs from same origin
     const [coreURL, wasmURL, workerURL] = await Promise.all([
       toBlobURL('/ffmpeg/ffmpeg-core.js',   'text/javascript'),
       toBlobURL('/ffmpeg/ffmpeg-core.wasm', 'application/wasm'),
