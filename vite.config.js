@@ -9,12 +9,4 @@ export default defineConfig({
       'Cross-Origin-Embedder-Policy': 'credentialless',
     },
   },
-  optimizeDeps: {
-    exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
-  },
-  build: {
-    rollupOptions: {
-      external: [],
-    },
-  },
 })

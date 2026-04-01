@@ -28,6 +28,9 @@ npm run dev
 
 ```bash
 node scripts/download-ffmpeg.js
+
+This downloads 5 files into `public/ffmpeg/` including the ESM bundles.
+Commit all of them.
 ```
 
 This downloads three files (~30 MB total) into `public/ffmpeg/`.

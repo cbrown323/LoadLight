@@ -1,18 +1,23 @@
 /**
  * ffmpegLoader.js
  *
- * Imports @ffmpeg/ffmpeg and @ffmpeg/util from npm (bundled by Vite),
- * then loads the core/wasm/worker from /ffmpeg/ — self-hosted in public/.
+ * Loads ALL ffmpeg assets from /ffmpeg/ (public folder, same origin).
+ * Uses dynamic import() for the ESM bundles so Vite NEVER bundles them.
  *
- * This is the only reliable way to avoid the CDN Worker CORS error on Vercel.
- * The npm package is bundled at build time so no CDN fetch happens at runtime.
- * The core/wasm/worker files are served from the same origin.
+ * Why dynamic import instead of static:
+ *   import { FFmpeg } from '@ffmpeg/ffmpeg'  ← Vite bundles this, transforms
+ *   the internal worker URL, breaks our workerURL override = Worker CORS error.
  *
- * Before deploying, run: node scripts/download-ffmpeg.js
+ *   const { FFmpeg } = await import('/ffmpeg/ffmpeg-esm.js')  ← Vite leaves
+ *   this alone at runtime, the file is served as-is from public/, no transforms.
+ *
+ * Required files in public/ffmpeg/ (run: node scripts/download-ffmpeg.js):
+ *   ffmpeg-core.js      ~30 KB
+ *   ffmpeg-core.wasm    ~30 MB
+ *   worker.js           ~5 KB
+ *   ffmpeg-esm.js       ~5 KB
+ *   util-esm.js         ~5 KB
  */
-
-import { FFmpeg }              from '@ffmpeg/ffmpeg'
-import { fetchFile, toBlobURL } from '@ffmpeg/util'
 
 let _instance    = null
 let _loadPromise = null
@@ -22,12 +27,16 @@ export async function getFFmpeg(onLog) {
   if (_loadPromise) return _loadPromise
 
   _loadPromise = (async () => {
+    onLog?.('Loading ffmpeg (~30 MB, cached after first run)…')
+
+    // Dynamic import from same origin — Vite does NOT transform these
+    const { FFmpeg }               = await import('/ffmpeg/ffmpeg-esm.js')
+    const { fetchFile, toBlobURL } = await import('/ffmpeg/util-esm.js')
+
     const ff = new FFmpeg()
     if (onLog) ff.on('log', ({ message }) => onLog(`[ffmpeg] ${message}`))
 
-    onLog?.('Loading ffmpeg (~30 MB, cached after first run)…')
-
-    // All assets served from same origin — zero CORS involvement
+    // All three core assets as blob URLs from same origin
     const [coreURL, wasmURL, workerURL] = await Promise.all([
       toBlobURL('/ffmpeg/ffmpeg-core.js',   'text/javascript'),
       toBlobURL('/ffmpeg/ffmpeg-core.wasm', 'application/wasm'),
