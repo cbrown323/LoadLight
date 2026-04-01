@@ -6,17 +6,10 @@ export default defineConfig({
   server: {
     headers: {
       'Cross-Origin-Opener-Policy':  'same-origin',
-      'Cross-Origin-Embedder-Policy': 'credentialless',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
     },
   },
-  build: {
-    rollupOptions: {
-      // These are served from public/ffmpeg/ at runtime — not npm modules.
-      // Tell Rollup to leave the dynamic import() calls alone.
-      external: [
-        '/ffmpeg/ffmpeg-esm.js',
-        '/ffmpeg/util-esm.js',
-      ],
-    },
+  optimizeDeps: {
+    exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
   },
 })

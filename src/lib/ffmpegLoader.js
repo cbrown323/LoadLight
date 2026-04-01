@@ -1,10 +1,19 @@
 /**
  * ffmpegLoader.js
  *
- * Loads ffmpeg from public/ffmpeg/ using dynamic imports with
- * /* @vite-ignore */ comments so Vite skips analysis entirely.
- * The files are served as static assets — Rollup must not touch them.
+ * Loads @ffmpeg/ffmpeg from npm (Vite bundles it at build time),
+ * but points it at self-hosted core/wasm files in public/ffmpeg/
+ * to avoid CDN CORS issues on Vercel.
+ *
+ * The only files needed in public/ffmpeg/ are:
+ *   - ffmpeg-core.js   (~114 KB)
+ *   - ffmpeg-core.wasm (~30 MB)
+ *
+ * @ffmpeg/ffmpeg and @ffmpeg/util are installed via npm and bundled by Vite.
  */
+
+import { FFmpeg } from '@ffmpeg/ffmpeg'
+import { toBlobURL, fetchFile } from '@ffmpeg/util'
 
 let _instance    = null
 let _loadPromise = null
@@ -16,21 +25,23 @@ export async function getFFmpeg(onLog) {
   _loadPromise = (async () => {
     onLog?.('Loading ffmpeg (~30 MB, cached after first run)…')
 
-    // @vite-ignore tells Vite/Rollup to skip static analysis of this import.
-    // The files live in public/ffmpeg/ and are served at runtime from the same origin.
-    const { FFmpeg }               = await import(/* @vite-ignore */ '/ffmpeg/ffmpeg-esm.js')
-    const { fetchFile, toBlobURL } = await import(/* @vite-ignore */ '/ffmpeg/util-esm.js')
-
     const ff = new FFmpeg()
     if (onLog) ff.on('log', ({ message }) => onLog(`[ffmpeg] ${message}`))
 
-    const [coreURL, wasmURL, workerURL] = await Promise.all([
-      toBlobURL('/ffmpeg/ffmpeg-core.js',   'text/javascript'),
-      toBlobURL('/ffmpeg/ffmpeg-core.wasm', 'application/wasm'),
-      toBlobURL('/ffmpeg/worker.js',        'text/javascript'),
-    ])
+    const baseURL = '/ffmpeg'
 
-    await ff.load({ coreURL, wasmURL, workerURL })
+    // Convert core files to blob URLs so they work from any origin.
+    // The core.js and core.wasm are the only files we self-host.
+    const coreURL = await toBlobURL(
+      `${baseURL}/ffmpeg-core.js`,
+      'text/javascript'
+    )
+    const wasmURL = await toBlobURL(
+      `${baseURL}/ffmpeg-core.wasm`,
+      'application/wasm'
+    )
+
+    await ff.load({ coreURL, wasmURL })
 
     onLog?.('ffmpeg ready ✓')
     _instance = { ff, fetchFile }
