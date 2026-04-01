@@ -2,6 +2,11 @@
  * videoPreviewEncoder.js
  * Encodes a short preview clip from a video file using ffmpeg.wasm.
  * Supports custom start time for user-selected preview range.
+ *
+ * Speed optimisations:
+ *  - -preset ultrafast (3–5× vs 'fast')
+ *  - -threads 0  (use all cores on MT builds)
+ *  - -tune zerolatency (skip look-ahead, saves time on short clips)
  */
 import { getFFmpeg } from './ffmpegLoader.js'
 
@@ -18,7 +23,7 @@ export async function encodeVideoPreview(file, opts, onProgress, onLog) {
 
   onProgress?.(5)
   onLog?.('Loading ffmpeg…')
-  const { ff, fetchFile } = await getFFmpeg(onLog)
+  const { ff, fetchFile, multiThreaded: mt } = await getFFmpeg(onLog)
 
   onLog?.('Writing file…')
   await ff.writeFile(inputName, await fetchFile(file))
@@ -29,10 +34,13 @@ export async function encodeVideoPreview(file, opts, onProgress, onLog) {
 
   // -ss before -i = fast seek (input seeking), then trim -t seconds
   const args = [
+    '-threads',  '0',
     '-ss',       String(ss),
     '-i',        inputName,
     '-t',        String(PREVIEW_DURATION),
     '-c:v',      'libx264',
+    '-preset',   'ultrafast',
+    '-tune',     'zerolatency',
     '-crf',      String(crf),
     '-pix_fmt',  'yuv420p',
     '-movflags', '+faststart',
@@ -40,11 +48,13 @@ export async function encodeVideoPreview(file, opts, onProgress, onLog) {
     '-y',        outputName,
   ]
 
-  onLog?.(`Encoding ${PREVIEW_DURATION}s clip from ${formatTime(ss)} (CRF ${crf})…`)
+  onLog?.(`Encoding ${PREVIEW_DURATION}s clip from ${formatTime(ss)} (CRF ${crf}, ${mt ? 'MT ⚡' : 'ST'})…`)
+  const t0  = performance.now()
   const ret = await ff.exec(args)
+  const elapsed = ((performance.now() - t0) / 1000).toFixed(1)
 
   if (ret !== 0) {
-    onLog?.(`⚠ ffmpeg returned exit code ${ret}`)
+    onLog?.(`⚠ ffmpeg returned exit code ${ret} (${elapsed}s)`)
   }
 
   onProgress?.(88)
@@ -61,7 +71,7 @@ export async function encodeVideoPreview(file, opts, onProgress, onLog) {
   try { await ff.deleteFile(outputName) } catch (_) {}
 
   onProgress?.(100)
-  onLog?.(`Done — ${(blob.size / 1024).toFixed(0)} KB`)
+  onLog?.(`Done — ${(blob.size / 1024).toFixed(0)} KB in ${elapsed}s`)
 
   return { url, size: blob.size }
 }

@@ -11,12 +11,13 @@
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.10",
     "@ffmpeg/util": "^0.12.1",
+    "jszip": "^3.10.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "zustand": "^4.5.2",
-    "jszip": "^3.10.1"
+    "zustand": "^4.5.2"
   },
   "devDependencies": {
+    "@ffmpeg/core-mt": "^0.12.6",
     "@vitejs/plugin-react": "^4.2.1",
     "vite": "^5.2.0"
   }

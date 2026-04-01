@@ -2,12 +2,14 @@
  * ffmpegLoader.js
  *
  * Loads @ffmpeg/ffmpeg from npm (Vite bundles it at build time),
- * but points it at self-hosted core/wasm files in public/ffmpeg/
- * to avoid CDN CORS issues on Vercel.
+ * pointing at self-hosted core/wasm files in public/ffmpeg/.
  *
- * The only files needed in public/ffmpeg/ are:
- *   - ffmpeg-core.js   (~114 KB)
- *   - ffmpeg-core.wasm (~30 MB)
+ * ★ Multi-threaded by default — falls back to single-threaded
+ *   if SharedArrayBuffer is unavailable (missing COOP/COEP headers).
+ *
+ * Files in public/ffmpeg/:
+ *   MT:  ffmpeg-core-mt.js, ffmpeg-core-mt.wasm, ffmpeg-core.worker.js
+ *   ST:  ffmpeg-core.js,    ffmpeg-core.wasm
  *
  * Log listener is stored in a mutable ref so batch exports
  * can update it per-file without re-initialising ffmpeg.
@@ -20,6 +22,13 @@ let _instance    = null
 let _loadPromise = null
 let _onLog       = null   // mutable — updated on every getFFmpeg() call
 
+/** Check if the browser supports multi-threaded wasm */
+function canUseMultiThread() {
+  try {
+    return typeof SharedArrayBuffer !== 'undefined'
+  } catch { return false }
+}
+
 export async function getFFmpeg(onLog) {
   // Always update the log listener so batch exports see per-file logs
   _onLog = onLog
@@ -28,7 +37,9 @@ export async function getFFmpeg(onLog) {
   if (_loadPromise) return _loadPromise
 
   _loadPromise = (async () => {
-    _onLog?.('Loading ffmpeg (~30 MB, cached after first run)…')
+    const mt      = canUseMultiThread()
+    const label   = mt ? 'multi-threaded' : 'single-threaded'
+    _onLog?.(`Loading ffmpeg ${label} (~31 MB, cached after first run)…`)
 
     const ff = new FFmpeg()
 
@@ -36,13 +47,27 @@ export async function getFFmpeg(onLog) {
     ff.on('log', ({ message }) => _onLog?.(`[ffmpeg] ${message}`))
 
     const baseURL = '/ffmpeg'
-    const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript')
-    const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm')
 
-    await ff.load({ coreURL, wasmURL })
+    let coreURL, wasmURL, workerURL
 
-    _onLog?.('ffmpeg ready ✓')
-    _instance = { ff, fetchFile }
+    if (mt) {
+      // Multi-threaded core — uses SharedArrayBuffer + web workers
+      coreURL   = await toBlobURL(`${baseURL}/ffmpeg-core-mt.js`,       'text/javascript')
+      wasmURL   = await toBlobURL(`${baseURL}/ffmpeg-core-mt.wasm`,     'application/wasm')
+      workerURL = await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`,   'text/javascript')
+    } else {
+      // Single-threaded fallback
+      coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`,  'text/javascript')
+      wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm')
+    }
+
+    const loadOpts = { coreURL, wasmURL }
+    if (workerURL) loadOpts.workerURL = workerURL
+
+    await ff.load(loadOpts)
+
+    _onLog?.(`ffmpeg ready ✓ (${label})`)
+    _instance = { ff, fetchFile, multiThreaded: mt }
     return _instance
   })()
 
