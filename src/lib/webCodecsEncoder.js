@@ -87,22 +87,26 @@ function cleanupVideo(video) {
 }
 
 /**
- * Seek to a time and wait for the frame to actually paint.
- * Uses requestAnimationFrame after onseeked to ensure the video
- * element's internal texture is updated before we read from it.
+ * Seek to a time and wait for the frame to FULLY paint.
+ *
+ * Uses DOUBLE requestAnimationFrame after onseeked:
+ *  - First rAF: browser queues the composite of the decoded frame
+ *  - Second rAF: frame is guaranteed to be composited and readable
+ * This is a known browser pattern for reliable video frame capture.
  */
 function seekTo(video, time) {
   return new Promise((resolve) => {
+    const waitForPaint = () => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => resolve())
+      })
+    }
+
     if (Math.abs(video.currentTime - time) < 0.001) {
-      // Already at this time — but still wait a rAF for paint consistency
-      requestAnimationFrame(() => resolve())
+      waitForPaint()
       return
     }
-    video.onseeked = () => {
-      // Wait one animation frame for the decoded frame to be composited
-      // to the video element's rendering surface
-      requestAnimationFrame(() => resolve())
-    }
+    video.onseeked = waitForPaint
     video.currentTime = time
   })
 }
@@ -166,26 +170,28 @@ function estimateFromTimes(times) {
 /**
  * Capture every frame by sequential seeking.
  *
- * ALWAYS draws to canvas before creating VideoFrame. This:
- *  1. Guarantees we snapshot the actual decoded frame (not a stale texture)
- *  2. Handles scaling when needed
- *  3. Produces consistent results regardless of video element state
+ * Uses a REGULAR canvas (not OffscreenCanvas) for capture. This ensures:
+ *  1. drawImage reads from the main-thread compositor (synchronous)
+ *  2. Frame data is always current (OffscreenCanvas can lag on a worker thread)
+ *  3. VideoFrame has explicit timestamp + duration for correct muxing
  *
- * Every frame gets an explicit `duration` so the muxer knows exactly
- * how long each frame should display. Without it, playback timing
- * was uneven ("steppy").
+ * Explicit `duration` on every frame prevents uneven playback timing.
  */
-async function captureFrames(video, encoder, opts) {
+async function captureFrames(video, encoder, muxer, opts) {
   const {
     totalFrames, outFps, duration,
     finalWidth, finalHeight,
     onProgress, startTime = 0,
   } = opts
 
-  // Always use canvas — guarantees we get the actual painted frame
-  const canvas = new OffscreenCanvas(finalWidth, finalHeight)
-  const ctx = canvas.getContext('2d')
+  // Use regular canvas for synchronous, main-thread frame reads
+  const canvas = document.createElement('canvas')
+  canvas.width = finalWidth
+  canvas.height = finalHeight
+  const ctx = canvas.getContext('2d', { willReadFrequently: false })
   const frameDurationUs = Math.round(1_000_000 / outFps)
+
+  let encodedCount = 0
 
   for (let i = 0; i < totalFrames; i++) {
     const time = startTime + (i / outFps)
@@ -193,13 +199,11 @@ async function captureFrames(video, encoder, opts) {
 
     await seekTo(video, time)
 
-    // Draw to canvas first — this forces a read of the video's current
-    // decoded frame, guaranteeing we capture the correct content
+    // Synchronous draw — reads the composited video frame
     ctx.drawImage(video, 0, 0, finalWidth, finalHeight)
 
     const timestampUs = Math.round((time - startTime) * 1_000_000)
 
-    // Explicit duration ensures correct playback timing
     const frame = new VideoFrame(canvas, {
       timestamp: timestampUs,
       duration: frameDurationUs,
@@ -208,18 +212,21 @@ async function captureFrames(video, encoder, opts) {
     const keyFrame = i % (outFps * 2) === 0
     encoder.encode(frame, { keyFrame })
     frame.close()
+    encodedCount++
 
     // Back-pressure: wait if encoder queue is too deep
     while (encoder.encodeQueueSize > 8) {
       await new Promise(r => setTimeout(r, 5))
     }
 
-    // Yield to UI + report progress every 20 frames
-    if (i % 20 === 0) {
+    // Yield to UI + report progress every 15 frames
+    if (i % 15 === 0) {
       onProgress(Math.round((i / totalFrames) * 85))
       await new Promise(r => setTimeout(r, 0))
     }
   }
+
+  return encodedCount
 }
 
 // ── Audio extraction & encoding ────────────────────────────
@@ -311,7 +318,12 @@ function createMuxer(fmt, finalWidth, finalHeight, outFps, includeAudio) {
   const target = new Mp4Target()
   const muxer = new Mp4Muxer({
     target,
-    video: { codec: 'avc', width: finalWidth, height: finalHeight },
+    video: {
+      codec: 'avc',
+      width: finalWidth,
+      height: finalHeight,
+      frameRate: outFps, // Critical for correct MP4 timing
+    },
     ...(includeAudio ? {
       audio: { codec: 'aac', numberOfChannels: 2, sampleRate: 44100 },
     } : {}),
@@ -368,7 +380,9 @@ export async function encodeVideoWebCodecs(file, opts) {
     const finalHeight = outHeight % 2 === 0 ? outHeight : outHeight - 1
 
     const isWebm = fmt === 'webm'
-    const videoCodec = isWebm ? 'vp8' : 'avc1.640028'
+    // Constrained Baseline: no B-frames = no decode timestamp reordering
+    // B-frames from High profile were causing steppy playback
+    const videoCodec = isWebm ? 'vp8' : 'avc1.42e028'
     const videoBitrate = userBitrate > 0
       ? userBitrate * 1000
       : qualityToBitrate(quality, finalWidth, outFps)
@@ -382,7 +396,10 @@ export async function encodeVideoWebCodecs(file, opts) {
       const { muxer, target } = createMuxer(fmt, finalWidth, finalHeight, outFps, includeAudio)
 
       const encoder = new VideoEncoder({
-        output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+        output: (chunk, meta) => {
+          // Use explicit timestamp override to prevent encoder reordering
+          muxer.addVideoChunk(chunk, meta, chunk.timestamp)
+        },
         error: (err) => console.error('VideoEncoder error:', err),
       })
 
@@ -398,7 +415,7 @@ export async function encodeVideoWebCodecs(file, opts) {
       })
 
       // Capture all frames via sequential seeking
-      await captureFrames(video, encoder, {
+      const captured = await captureFrames(video, encoder, muxer, {
         totalFrames, outFps, duration,
         finalWidth, finalHeight,
         onProgress: (pct) => {
@@ -471,12 +488,12 @@ export async function encodePreviewWebCodecs(file, opts) {
   const { muxer, target } = createMuxer('mp4', finalWidth, finalHeight, outFps, false)
 
   const encoder = new VideoEncoder({
-    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta, chunk.timestamp),
     error: (err) => console.error('Preview VideoEncoder error:', err),
   })
 
   encoder.configure({
-    codec: 'avc1.640028',
+    codec: 'avc1.42e028',
     width: finalWidth,
     height: finalHeight,
     bitrate,
@@ -486,7 +503,7 @@ export async function encodePreviewWebCodecs(file, opts) {
     avc: { format: 'avc' },
   })
 
-  await captureFrames(video, encoder, {
+  await captureFrames(video, encoder, muxer, {
     totalFrames, outFps, duration,
     finalWidth, finalHeight,
     onProgress: () => {},
