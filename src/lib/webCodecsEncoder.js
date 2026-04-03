@@ -64,6 +64,11 @@ function loadVideo(file) {
     video.preload = 'auto'
     video.src = URL.createObjectURL(file)
 
+    // Append hidden to DOM — some browsers optimize frame decoding
+    // for elements in the document vs detached elements
+    video.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none'
+    document.body.appendChild(video)
+
     video.onloadedmetadata = () => {
       video.oncanplaythrough = () => resolve(video)
       video.onerror = reject
@@ -73,10 +78,31 @@ function loadVideo(file) {
   })
 }
 
+/** Remove video element from DOM and revoke blob URL */
+function cleanupVideo(video) {
+  try { video.pause() } catch (_) {}
+  try { URL.revokeObjectURL(video.src) } catch (_) {}
+  try { video.parentNode?.removeChild(video) } catch (_) {}
+  video.src = ''
+}
+
+/**
+ * Seek to a time and wait for the frame to actually paint.
+ * Uses requestAnimationFrame after onseeked to ensure the video
+ * element's internal texture is updated before we read from it.
+ */
 function seekTo(video, time) {
   return new Promise((resolve) => {
-    if (Math.abs(video.currentTime - time) < 0.001) { resolve(); return }
-    video.onseeked = () => resolve()
+    if (Math.abs(video.currentTime - time) < 0.001) {
+      // Already at this time — but still wait a rAF for paint consistency
+      requestAnimationFrame(() => resolve())
+      return
+    }
+    video.onseeked = () => {
+      // Wait one animation frame for the decoded frame to be composited
+      // to the video element's rendering surface
+      requestAnimationFrame(() => resolve())
+    }
     video.currentTime = time
   })
 }
@@ -140,19 +166,26 @@ function estimateFromTimes(times) {
 /**
  * Capture every frame by sequential seeking.
  *
- * Each seek is ~10-20ms for forward seeks (browser decodes from current
- * position, not from a keyframe). For a 10s/30fps video:
- *   300 frames × 15ms = ~4.5 seconds
+ * ALWAYS draws to canvas before creating VideoFrame. This:
+ *  1. Guarantees we snapshot the actual decoded frame (not a stale texture)
+ *  2. Handles scaling when needed
+ *  3. Produces consistent results regardless of video element state
  *
- * This is deterministic — every frame is captured at the exact timestamp.
- * Multi-resolution safe — call again with a different canvas size.
+ * Every frame gets an explicit `duration` so the muxer knows exactly
+ * how long each frame should display. Without it, playback timing
+ * was uneven ("steppy").
  */
 async function captureFrames(video, encoder, opts) {
   const {
     totalFrames, outFps, duration,
-    finalWidth, finalHeight, needsScaling, canvas, ctx,
+    finalWidth, finalHeight,
     onProgress, startTime = 0,
   } = opts
+
+  // Always use canvas — guarantees we get the actual painted frame
+  const canvas = new OffscreenCanvas(finalWidth, finalHeight)
+  const ctx = canvas.getContext('2d')
+  const frameDurationUs = Math.round(1_000_000 / outFps)
 
   for (let i = 0; i < totalFrames; i++) {
     const time = startTime + (i / outFps)
@@ -160,16 +193,17 @@ async function captureFrames(video, encoder, opts) {
 
     await seekTo(video, time)
 
+    // Draw to canvas first — this forces a read of the video's current
+    // decoded frame, guaranteeing we capture the correct content
+    ctx.drawImage(video, 0, 0, finalWidth, finalHeight)
+
     const timestampUs = Math.round((time - startTime) * 1_000_000)
 
-    let frame
-    if (needsScaling) {
-      ctx.drawImage(video, 0, 0, finalWidth, finalHeight)
-      frame = new VideoFrame(canvas, { timestamp: timestampUs })
-    } else {
-      // Direct capture from video element — skips canvas copy
-      frame = new VideoFrame(video, { timestamp: timestampUs })
-    }
+    // Explicit duration ensures correct playback timing
+    const frame = new VideoFrame(canvas, {
+      timestamp: timestampUs,
+      duration: frameDurationUs,
+    })
 
     const keyFrame = i % (outFps * 2) === 0
     encoder.encode(frame, { keyFrame })
@@ -332,7 +366,6 @@ export async function encodeVideoWebCodecs(file, opts) {
     const outHeight = Math.round(srcHeight * scale)
     const finalWidth = outWidth % 2 === 0 ? outWidth : outWidth - 1
     const finalHeight = outHeight % 2 === 0 ? outHeight : outHeight - 1
-    const needsScaling = finalWidth !== srcWidth || finalHeight !== srcHeight
 
     const isWebm = fmt === 'webm'
     const videoCodec = isWebm ? 'vp8' : 'avc1.640028'
@@ -364,17 +397,10 @@ export async function encodeVideoWebCodecs(file, opts) {
         ...(isWebm ? {} : { avc: { format: 'avc' } }),
       })
 
-      // Canvas only needed if scaling
-      let canvas = null, ctx = null
-      if (needsScaling) {
-        canvas = new OffscreenCanvas(finalWidth, finalHeight)
-        ctx = canvas.getContext('2d')
-      }
-
       // Capture all frames via sequential seeking
       await captureFrames(video, encoder, {
         totalFrames, outFps, duration,
-        finalWidth, finalHeight, needsScaling, canvas, ctx,
+        finalWidth, finalHeight,
         onProgress: (pct) => {
           const base = 5 + (wi / targetWidths.length) * 90
           const range = 90 / targetWidths.length
@@ -413,7 +439,7 @@ export async function encodeVideoWebCodecs(file, opts) {
     onProgress(5 + Math.round(((wi + 1) / targetWidths.length) * 93))
   }
 
-  URL.revokeObjectURL(video.src)
+  cleanupVideo(video)
   onProgress(100)
   return results.length > 0 ? results : null
 }
@@ -428,7 +454,7 @@ export async function encodePreviewWebCodecs(file, opts) {
   const video = await loadVideo(file)
   const duration = Math.min(4, video.duration - startTime)
   if (duration <= 0) {
-    URL.revokeObjectURL(video.src)
+    cleanupVideo(video)
     throw new Error('Selected time range is past the end of the video.')
   }
 
@@ -463,7 +489,6 @@ export async function encodePreviewWebCodecs(file, opts) {
   await captureFrames(video, encoder, {
     totalFrames, outFps, duration,
     finalWidth, finalHeight,
-    needsScaling: false, canvas: null, ctx: null,
     onProgress: () => {},
     startTime,
   })
@@ -472,7 +497,7 @@ export async function encodePreviewWebCodecs(file, opts) {
   encoder.close()
   muxer.finalize()
 
-  URL.revokeObjectURL(video.src)
+  cleanupVideo(video)
 
   const blob = new Blob([target.buffer], { type: 'video/mp4' })
   const url = URL.createObjectURL(blob)
