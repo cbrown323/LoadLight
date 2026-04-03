@@ -5,7 +5,7 @@ import s from './BottomBar.module.css'
 const STATUS_LABEL = { done: 'Done', processing: 'Converting…', pending: 'Pending', error: 'Error' }
 
 export default function BottomBar() {
-  const { files, quality, exportRunning, exportProgress, exportLog = [], runExport } = useStore()
+  const { files, quality, exportRunning, exportProgress, exportLog = [], runExport, encodingMode } = useStore()
   const logRef = useRef()
 
   useEffect(() => {
@@ -72,13 +72,23 @@ export default function BottomBar() {
         </div>
 
         {/* Export button */}
-        <button
-          className={s.exportBtn}
-          disabled={files.length === 0 || exportRunning}
-          onClick={runExport}
-        >
-          {exportRunning ? '⏳ Processing…' : '⚡ Export All'}
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+          <button
+            className={s.exportBtn}
+            disabled={files.length === 0 || exportRunning}
+            onClick={runExport}
+          >
+            {exportRunning ? '⏳ Processing…' : '⚡ Export All'}
+          </button>
+          <span style={{
+            fontSize: 9,
+            letterSpacing: '0.05em',
+            color: encodingMode === 'webcodecs' ? '#22d3a0' : '#94a3b8',
+            opacity: 0.8,
+          }}>
+            {encodingMode === 'webcodecs' ? '⚡ Hardware Accelerated' : '🔧 Software Encoding'}
+          </span>
+        </div>
       </div>
 
       {/* ── Log row: inline, expands the bar downward ── */}

@@ -80,3 +80,16 @@ export function releaseFFmpeg() {
   _loadPromise = null
   _onLog       = null
 }
+
+/**
+ * Detect which encoding mode is available for video.
+ * Returns 'webcodecs' (hardware-accel) or 'wasm' (software fallback).
+ */
+export function getEncodingMode() {
+  try {
+    if (typeof VideoEncoder === 'function' && typeof VideoFrame === 'function') {
+      return 'webcodecs'
+    }
+  } catch {}
+  return 'wasm'
+}

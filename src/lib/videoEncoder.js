@@ -1,17 +1,15 @@
 /**
- * videoEncoder.js — ffmpeg.wasm 0.12.x (optimised for speed)
+ * videoEncoder.js — hybrid encoder with WebCodecs fast-path
  *
- * Handles: MP4, WebM, and GIF output (including GIF→GIF re-optimise)
+ * Routing:
+ *  1. If WebCodecs is available AND format is MP4/WebM → hardware-accelerated path
+ *  2. Otherwise → ffmpeg.wasm software path (GIF, unsupported browsers)
  *
- * Speed optimisations applied:
- *  1. Multi-threaded core (when available) — 1.5–3× faster
- *  2. x264: -preset ultrafast (-tune zerolatency for extra speed)
- *  3. VP8: -deadline realtime -cpu-used 8 (fastest VP8 config)
- *  4. Responsive widths: single input decode, sequential encode
- *     (input stays in WASM FS, only decoded once)
- *  5. -threads 0 lets ffmpeg use all available threads in MT mode
+ * WebCodecs path: 10–50× faster via GPU/hardware encoder
+ * WASM path:      universal fallback, handles GIF + old browsers
  */
 import { getFFmpeg } from './ffmpegLoader.js'
+import { supportsWebCodecs, encodeVideoWebCodecs } from './webCodecsEncoder.js'
 
 /**
  * Map quality slider (0-100) to CRF.
@@ -83,6 +81,24 @@ export async function encodeVideo(file, opts) {
 
   const isGif    = file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif'
   const fmt      = fmtSetting === 'auto' ? 'mp4' : fmtSetting
+
+  // ── WebCodecs fast-path (hardware-accelerated) ──────────
+  // Available for MP4 and WebM in Chrome 94+, Edge 94+, Safari 16.4+
+  if (supportsWebCodecs() && fmt !== 'gif') {
+    onLog('🚀 Using WebCodecs (hardware-accelerated)…')
+    try {
+      const results = await encodeVideoWebCodecs(file, opts)
+      if (results && results.length > 0) return results
+      onLog('⚠ WebCodecs returned empty — falling back to ffmpeg.wasm')
+    } catch (err) {
+      onLog(`⚠ WebCodecs failed: ${err.message} — falling back to ffmpeg.wasm`)
+      console.warn('WebCodecs failed, using WASM fallback:', err)
+    }
+  } else if (fmt !== 'gif') {
+    onLog('ℹ WebCodecs unavailable — using ffmpeg.wasm (slower)')
+  }
+
+  // ── ffmpeg.wasm fallback path ───────────────────────────
   const inExt    = isGif ? 'gif' : (file.name.split('.').pop() || 'mp4')
   const baseName = file.name.replace(/\.[^.]+$/, '')
   const inputName = `in_${Date.now()}.${inExt}`

@@ -3,6 +3,7 @@ import { runExport as _runExport }      from '../lib/exportEngine.js'
 import { schedulePreview, cancelPreview } from '../lib/previewEncoder.js'
 import { encodeVideoPreview } from '../lib/videoPreviewEncoder.js'
 import { savePreset, loadPreset, listPresets, deletePreset } from '../lib/presets.js'
+import { getEncodingMode } from '../lib/ffmpegLoader.js'
 
 // ── helpers ───────────────────────────────────────────────
 export function fmtBytes(b) {
@@ -81,6 +82,9 @@ export function qualityZone(q) {
 
 // ── store ─────────────────────────────────────────────────
 const useStore = create((set, get) => ({
+
+  // ── encoding mode ──────────────────────────────────────
+  encodingMode: getEncodingMode(), // 'webcodecs' or 'wasm'
 
   // ── files ──────────────────────────────────────────────
   files:     [],

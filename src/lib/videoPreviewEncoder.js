@@ -1,21 +1,39 @@
 /**
  * videoPreviewEncoder.js
- * Encodes a short preview clip from a video file using ffmpeg.wasm.
- * Supports custom start time for user-selected preview range.
+ * Encodes a short preview clip from a video file.
  *
- * Speed optimisations:
- *  - -preset ultrafast (3–5× vs 'fast')
- *  - -threads 0  (use all cores on MT builds)
- *  - -tune zerolatency (skip look-ahead, saves time on short clips)
+ * Routing:
+ *  1. WebCodecs path (hardware-accelerated) — preferred
+ *  2. ffmpeg.wasm fallback — GIF input or unsupported browsers
  */
 import { getFFmpeg } from './ffmpegLoader.js'
+import { supportsWebCodecs, encodePreviewWebCodecs } from './webCodecsEncoder.js'
 
 const PREVIEW_DURATION = 4
 
 export async function encodeVideoPreview(file, opts, onProgress, onLog) {
   const { quality = 72, startTime = 0 } = opts
 
-  const isGif     = file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif'
+  // ── WebCodecs fast-path ──
+  const isGif = file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif'
+  if (supportsWebCodecs() && !isGif) {
+    onLog?.('🚀 Preview via WebCodecs (hardware-accelerated)…')
+    try {
+      onProgress?.(10)
+      const result = await encodePreviewWebCodecs(file, { quality, startTime })
+      if (result) {
+        onProgress?.(100)
+        onLog?.(`Done — ${(result.size / 1024).toFixed(0)} KB (WebCodecs)`)
+        return result
+      }
+    } catch (err) {
+      onLog?.(`⚠ WebCodecs preview failed: ${err.message} — falling back`)
+      console.warn('WebCodecs preview failed:', err)
+    }
+  }
+
+  // ── ffmpeg.wasm fallback ──
+
   const inExt     = isGif ? 'gif' : (file.name.split('.').pop().toLowerCase() || 'mp4')
   const ts        = Date.now()
   const inputName  = `prev_in_${ts}.${inExt}`
