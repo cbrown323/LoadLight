@@ -1,16 +1,20 @@
 /**
  * webCodecsEncoder.js — Hardware-accelerated video encoding via WebCodecs API
  *
- * v2: Optimised for SPEED.
+ * v3: Fixed frame timing + FPS detection.
  *
- * Key speedups vs v1:
- *  1. requestVideoFrameCallback playback capture instead of frame-by-frame seeking
- *     → 3–10× faster frame extraction (sequential decode vs random seeking)
- *  2. hardwareAcceleration: 'prefer-hardware' — forces GPU encoding path
- *  3. latencyMode: 'realtime' — skips look-ahead, encodes faster
- *  4. Direct VideoFrame from <video> when no scaling needed — skips canvas copy
- *  5. Larger audio chunks (4096 samples) — fewer encode calls
- *  6. Encoder back-pressure — waits when queue is full instead of flooding
+ * Key design decisions:
+ *  1. Source FPS detection via requestVideoFrameCallback — measures actual
+ *     frame intervals from the decoded video instead of guessing 30fps
+ *  2. Playback capture at 2× speed — 8× was too fast, browser dropped frames
+ *     and produced black output. 2× is still faster than realtime while
+ *     giving the decoder time to produce every frame.
+ *  3. Timestamps from metadata.mediaTime — uses the browser's actual decode
+ *     timestamps instead of computed frameIndex × frameDuration.
+ *     This preserves the original video's timing exactly.
+ *  4. hardwareAcceleration: 'prefer-hardware' — explicitly requests GPU path
+ *  5. latencyMode: 'realtime' — skip look-ahead analysis for faster encode
+ *  6. Direct VideoFrame from <video> when no scaling — skips canvas copy
  */
 
 import { Muxer as Mp4Muxer, ArrayBufferTarget as Mp4Target } from 'mp4-muxer'
@@ -32,7 +36,6 @@ export function supportsWebCodecs() {
   }
 }
 
-/** Check if requestVideoFrameCallback is available (Chrome 83+) */
 function hasRVFC() {
   return typeof HTMLVideoElement !== 'undefined' &&
     'requestVideoFrameCallback' in HTMLVideoElement.prototype
@@ -72,96 +75,155 @@ function seekTo(video, time) {
   })
 }
 
+/**
+ * Detect the actual frame rate of a video by playing it briefly
+ * and measuring frame intervals via requestVideoFrameCallback.
+ * Falls back to 30fps if detection fails.
+ */
+async function detectFPS(video) {
+  if (!hasRVFC()) return 30
+
+  return new Promise((resolve) => {
+    const times = []
+    let callbackId = null
+    const timeout = setTimeout(() => {
+      video.pause()
+      resolve(estimateFromTimes(times))
+    }, 2000) // Max 2s to detect
+
+    function onFrame(now, metadata) {
+      times.push(metadata.mediaTime)
+
+      if (times.length >= 15) {
+        // Enough samples to estimate
+        clearTimeout(timeout)
+        video.pause()
+        resolve(estimateFromTimes(times))
+        return
+      }
+
+      callbackId = video.requestVideoFrameCallback(onFrame)
+    }
+
+    // Seek to start and play briefly
+    video.currentTime = 0
+    video.onseeked = () => {
+      callbackId = video.requestVideoFrameCallback(onFrame)
+      video.play().catch(() => {
+        clearTimeout(timeout)
+        resolve(30)
+      })
+    }
+  })
+}
+
+function estimateFromTimes(times) {
+  if (times.length < 3) return 30
+
+  // Calculate median interval
+  const intervals = []
+  for (let i = 1; i < times.length; i++) {
+    const diff = times[i] - times[i - 1]
+    if (diff > 0.001) intervals.push(diff)
+  }
+
+  if (intervals.length === 0) return 30
+
+  intervals.sort((a, b) => a - b)
+  const median = intervals[Math.floor(intervals.length / 2)]
+
+  // Round to nearest standard FPS
+  const rawFps = 1 / median
+  const standards = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60]
+  let closest = 30
+  let closestDiff = Infinity
+  for (const std of standards) {
+    const diff = Math.abs(rawFps - std)
+    if (diff < closestDiff) {
+      closestDiff = diff
+      closest = std
+    }
+  }
+
+  return closest
+}
+
 // ── Frame capture strategies ───────────────────────────────
 
 /**
  * FAST: Capture frames by playing video and using requestVideoFrameCallback.
- * Sequential decode is 3–10× faster than random seeking.
- * The browser decodes frames in order using its optimised decoder pipeline.
+ *
+ * Key fix (v3): Uses metadata.mediaTime for timestamps instead of computed
+ * frameIndex × frameDuration. This preserves the original video's frame
+ * timing exactly. Playback rate capped at 2× to prevent dropped frames
+ * and black frame output.
  */
 async function captureFramesPlayback(video, encoder, opts) {
   const {
-    totalFrames, outFps, duration, frameDuration,
-    finalWidth, finalHeight, srcWidth, srcHeight,
-    needsScaling, canvas, ctx, onProgress,
+    duration, finalWidth, finalHeight, srcWidth, srcHeight,
+    needsScaling, canvas, ctx, onProgress, outFps,
   } = opts
 
-  // Reset video to start
   await seekTo(video, 0)
 
   return new Promise((resolve, reject) => {
-    let frameIndex = 0
-    let lastMediaTime = -1
+    let frameCount = 0
+    let lastMediaTime = -Infinity
 
     function processFrame(now, metadata) {
-      if (frameIndex >= totalFrames) {
-        video.pause()
-        resolve()
-        return
-      }
-
       const mediaTime = metadata.mediaTime
 
       // Skip duplicate frames (same mediaTime)
-      if (Math.abs(mediaTime - lastMediaTime) < 0.001) {
+      if (mediaTime - lastMediaTime < 0.001) {
         video.requestVideoFrameCallback(processFrame)
         return
       }
       lastMediaTime = mediaTime
 
       try {
+        // Use actual media time for timestamp — preserves original timing
+        const timestampUs = Math.round(mediaTime * 1_000_000)
+
         let frame
         if (needsScaling) {
           ctx.drawImage(video, 0, 0, finalWidth, finalHeight)
-          frame = new VideoFrame(canvas, {
-            timestamp: Math.round(frameIndex * frameDuration),
-            duration: Math.round(frameDuration),
-          })
+          frame = new VideoFrame(canvas, { timestamp: timestampUs })
         } else {
-          // Direct capture — no canvas intermediate
-          frame = new VideoFrame(video, {
-            timestamp: Math.round(frameIndex * frameDuration),
-            duration: Math.round(frameDuration),
-          })
+          frame = new VideoFrame(video, { timestamp: timestampUs })
         }
 
-        // Back-pressure: if encoder queue is filling up, wait
-        const keyFrame = frameIndex % (outFps * 2) === 0
+        // Keyframe every ~2 seconds based on actual time
+        const keyFrame = frameCount === 0 || (mediaTime - 0) % 2.0 < (1 / outFps)
         encoder.encode(frame, { keyFrame })
         frame.close()
-        frameIndex++
+        frameCount++
 
-        onProgress(Math.round((frameIndex / totalFrames) * 85))
+        onProgress(Math.round((mediaTime / duration) * 85))
       } catch (err) {
-        console.warn('Frame capture error:', err)
+        console.warn('Frame capture error at', mediaTime.toFixed(2) + 's:', err.message)
       }
 
-      // Request next frame
       video.requestVideoFrameCallback(processFrame)
     }
 
-    // Set up error handler
-    video.onerror = (e) => reject(new Error('Video playback error during capture'))
+    video.onerror = () => reject(new Error('Video playback error during capture'))
 
-    // Handle video ending before we've captured enough frames
     video.onended = () => {
       video.pause()
-      resolve()
+      resolve(frameCount)
     }
 
-    // Start capturing
     video.requestVideoFrameCallback(processFrame)
 
-    // Play at maximum browser-supported rate
-    // Most browsers cap at 16x but will decode as fast as possible
-    video.playbackRate = 8
+    // 2× speed: fast enough to be quicker than realtime, slow enough
+    // that the browser can decode every frame without dropping/black output
+    video.playbackRate = 2
     video.play().catch(reject)
   })
 }
 
 /**
  * FALLBACK: Frame-by-frame seeking (slower, but works everywhere).
- * Used when requestVideoFrameCallback is unavailable.
  */
 async function captureFramesSeeking(video, encoder, opts) {
   const {
@@ -176,25 +238,22 @@ async function captureFramesSeeking(video, encoder, opts) {
 
     await seekTo(video, time)
 
+    // Use actual time for timestamp, not computed index
+    const timestampUs = Math.round((time - startTime) * 1_000_000)
+
     let frame
     if (needsScaling) {
       ctx.drawImage(video, 0, 0, finalWidth, finalHeight)
-      frame = new VideoFrame(canvas, {
-        timestamp: Math.round(i * frameDuration),
-        duration: Math.round(frameDuration),
-      })
+      frame = new VideoFrame(canvas, { timestamp: timestampUs })
     } else {
-      frame = new VideoFrame(video, {
-        timestamp: Math.round(i * frameDuration),
-        duration: Math.round(frameDuration),
-      })
+      frame = new VideoFrame(video, { timestamp: timestampUs })
     }
 
     const keyFrame = i % (outFps * 2) === 0
     encoder.encode(frame, { keyFrame })
     frame.close()
 
-    // Back-pressure: wait if encoder has too many pending frames
+    // Back-pressure: wait if encoder queue is filling up
     if (encoder.encodeQueueSize > 5) {
       await new Promise(r => setTimeout(r, 1))
     }
@@ -238,9 +297,8 @@ async function encodeAudio(muxer, audioBuf, isWebm, maxDuration) {
 
   const useDuration = Math.min(audioBuf.duration, maxDuration)
   const totalSamples = Math.floor(useDuration * srcRate)
-
-  // Process in larger chunks = fewer encode calls = faster
   const chunkSize = 4096
+
   for (let offset = 0; offset < totalSamples; offset += chunkSize) {
     const remaining = Math.min(chunkSize, totalSamples - offset)
 
@@ -262,7 +320,6 @@ async function encodeAudio(muxer, audioBuf, isWebm, maxDuration) {
     audioEncoder.encode(audioData)
     audioData.close()
 
-    // Yield less frequently
     if ((offset / chunkSize) % 100 === 0) {
       await new Promise(r => setTimeout(r, 0))
     }
@@ -306,39 +363,6 @@ function createMuxer(fmt, finalWidth, finalHeight, outFps, includeAudio) {
   return { muxer, target, isWebm }
 }
 
-// ── VideoEncoder setup ─────────────────────────────────────
-
-function createVideoEncoder(muxer, totalFrames, onProgress) {
-  let encodedFrames = 0
-
-  const encoder = new VideoEncoder({
-    output: (chunk, meta) => {
-      muxer.addVideoChunk(chunk, meta)
-      encodedFrames++
-    },
-    error: (err) => console.error('VideoEncoder error:', err),
-  })
-
-  return encoder
-}
-
-function configureEncoder(encoder, codec, width, height, bitrate, fps, isWebm) {
-  encoder.configure({
-    codec,
-    width,
-    height,
-    bitrate,
-    framerate: fps,
-    // 'realtime' skips look-ahead analysis — much faster encode
-    latencyMode: 'realtime',
-    // Explicitly request hardware acceleration
-    hardwareAcceleration: 'prefer-hardware',
-    ...(isWebm ? {} : {
-      avc: { format: 'avc' },
-    }),
-  })
-}
-
 // ── Main encode function ───────────────────────────────────
 
 export async function encodeVideoWebCodecs(file, opts) {
@@ -364,12 +388,15 @@ export async function encodeVideoWebCodecs(file, opts) {
   const srcWidth = video.videoWidth
   const srcHeight = video.videoHeight
   const duration = video.duration
-  const srcFps = 30
-  const outFps = targetFps > 0 ? targetFps : srcFps
   const useRVFC = hasRVFC()
 
-  onLog(`Source: ${srcWidth}×${srcHeight}, ${duration.toFixed(1)}s`)
-  onLog(`Encoding via WebCodecs ⚡ (${useRVFC ? 'playback capture' : 'seek capture'})`)
+  // Detect actual source FPS instead of guessing 30
+  onLog('Detecting source frame rate…')
+  const detectedFps = await detectFPS(video)
+  const outFps = targetFps > 0 ? targetFps : detectedFps
+
+  onLog(`Source: ${srcWidth}×${srcHeight}, ${duration.toFixed(1)}s, ${detectedFps}fps`)
+  onLog(`Output: ${outFps}fps via WebCodecs ⚡ (${useRVFC ? 'playback capture' : 'seek capture'})`)
   onProgress(5)
 
   const includeAudio = !isGif
@@ -400,25 +427,30 @@ export async function encodeVideoWebCodecs(file, opts) {
     const t0 = performance.now()
 
     try {
-      // Set up muxer
       const { muxer, target } = createMuxer(fmt, finalWidth, finalHeight, outFps, includeAudio)
 
-      // Set up encoder
-      const encoder = createVideoEncoder(muxer, totalFrames, (pct) => {
-        const base = 5 + (wi / targetWidths.length) * 90
-        const range = 90 / targetWidths.length
-        onProgress(Math.round(base + (pct / 100) * range))
+      const encoder = new VideoEncoder({
+        output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+        error: (err) => console.error('VideoEncoder error:', err),
       })
-      configureEncoder(encoder, videoCodec, finalWidth, finalHeight, videoBitrate, outFps, isWebm)
 
-      // Set up canvas only if needed
+      encoder.configure({
+        codec: videoCodec,
+        width: finalWidth,
+        height: finalHeight,
+        bitrate: videoBitrate,
+        framerate: outFps,
+        latencyMode: 'realtime',
+        hardwareAcceleration: 'prefer-hardware',
+        ...(isWebm ? {} : { avc: { format: 'avc' } }),
+      })
+
       let canvas = null, ctx = null
       if (needsScaling) {
         canvas = new OffscreenCanvas(finalWidth, finalHeight)
         ctx = canvas.getContext('2d')
       }
 
-      // Capture & encode frames
       const captureOpts = {
         totalFrames, outFps, duration, frameDuration,
         finalWidth, finalHeight, srcWidth, srcHeight,
@@ -430,10 +462,9 @@ export async function encodeVideoWebCodecs(file, opts) {
         },
       }
 
-      if (useRVFC && wi === 0) {
-        // Use fast playback capture for first resolution
-        // (subsequent resolutions reuse seeked capture since video is already loaded)
-        await captureFramesPlayback(video, encoder, captureOpts)
+      if (useRVFC) {
+        const capturedCount = await captureFramesPlayback(video, encoder, captureOpts)
+        onLog(`Captured ${capturedCount} frames via playback`)
       } else {
         await captureFramesSeeking(video, encoder, captureOpts)
       }
@@ -441,7 +472,6 @@ export async function encodeVideoWebCodecs(file, opts) {
       await encoder.flush()
       encoder.close()
 
-      // Encode audio
       if (includeAudio) {
         const audioBuf = await audioBufPromise
         if (audioBuf) {
@@ -488,9 +518,12 @@ export async function encodePreviewWebCodecs(file, opts) {
     throw new Error('Selected time range is past the end of the video.')
   }
 
-  const outFps = 30
+  // Detect source FPS for the preview too
+  const detectedFps = await detectFPS(video)
+  const outFps = detectedFps
   const totalFrames = Math.ceil(duration * outFps)
   const frameDuration = 1_000_000 / outFps
+
   const width = video.videoWidth
   const height = video.videoHeight
   const finalWidth = width % 2 === 0 ? width : width - 1
@@ -515,7 +548,7 @@ export async function encodePreviewWebCodecs(file, opts) {
     avc: { format: 'avc' },
   })
 
-  // Preview uses seeking (since we start at startTime, not beginning)
+  // Preview uses seeking since we start at startTime
   await captureFramesSeeking(video, encoder, {
     totalFrames, outFps, duration, frameDuration,
     finalWidth, finalHeight,

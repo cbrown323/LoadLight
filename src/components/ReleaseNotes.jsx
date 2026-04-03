@@ -3,6 +3,19 @@ import s from './ReleaseNotes.module.css'
 
 const NOTES = [
   {
+    version: 'v1.4',
+    date: 'Apr 2026',
+    items: [
+      'WebCodecs hardware-accelerated encoding — 10–50× faster video export on Chrome/Edge/Safari',
+      'Automatic FPS detection — output matches source framerate exactly (24, 25, 30, 60fps etc.)',
+      'Playback capture pipeline — sequential decode replaces slow frame-by-frame seeking',
+      'Fixed black frame output and fast playback timing on 1080p exports',
+      'Hardware acceleration badge in bottom bar shows active encoding mode',
+      'Graceful fallback to ffmpeg.wasm for Firefox and GIF exports',
+      'Encoder back-pressure prevents memory spikes on long videos',
+    ],
+  },
+  {
     version: 'v1.3a',
     date: 'Mar 2026',
     items: [

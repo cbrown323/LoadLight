@@ -68,7 +68,7 @@ export default function TopBar() {
         <div className={s.logo}>
           <div className={s.logoIcon}>LL</div>
           LoadLight
-          <span className={s.version}>v1.3a</span>
+          <span className={s.version}>v1.4</span>
           <ReleaseNotes />
         </div>
 
