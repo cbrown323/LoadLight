@@ -101,7 +101,14 @@ function seekTo(video, time) {
       if (seekResolved && rvfcResolved) resolve()
     }
 
+    // Fallback: if rVFC doesn't fire within 150ms while paused, proceed.
+    const fallbackId = setTimeout(() => {
+      rvfcResolved = true
+      check()
+    }, 150)
+
     video.requestVideoFrameCallback((now, metadata) => {
+      clearTimeout(fallbackId)
       rvfcResolved = true
       check()
     })
@@ -206,7 +213,13 @@ async function captureFrames(video, encoder, muxer, opts) {
     // This is the "secret sauce" to fix steppy video.
     let attempts = 0
     while (Math.abs(video.currentTime - targetTime) > 0.1 && attempts < 5) {
-      await new Promise(r => video.requestVideoFrameCallback(r))
+      await new Promise(r => {
+        const fallback = setTimeout(r, 100)
+        video.requestVideoFrameCallback(() => {
+          clearTimeout(fallback)
+          r()
+        })
+      })
       attempts++
     }
 
@@ -221,6 +234,10 @@ async function captureFrames(video, encoder, muxer, opts) {
     })
 
     const keyFrame = i % (outFps * 2) === 0
+    if (encoder.state === 'closed') {
+      frame.close()
+      throw new Error('VideoEncoder closed unexpectedly.')
+    }
     encoder.encode(frame, { keyFrame })
     frame.close()
     encodedCount++
@@ -420,7 +437,8 @@ export async function encodeVideoWebCodecs(file, opts) {
         bitrate: videoBitrate,
         framerate: outFps,
         latencyMode: 'realtime',
-        hardwareAcceleration: 'prefer-hardware',
+        // VP8 hardware encoding isn't supported on most GPUs. Let the browser pick software.
+        hardwareAcceleration: isWebm ? 'no-preference' : 'prefer-hardware',
         ...(isWebm ? {} : { avc: { format: 'avc' } }),
       })
 
