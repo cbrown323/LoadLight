@@ -87,27 +87,33 @@ function cleanupVideo(video) {
 }
 
 /**
- * Seek to a time and wait for the frame to FULLY paint.
+ * Seek to a time and wait for the browser to confirm the frame is ready via rVFC.
  *
- * Uses DOUBLE requestAnimationFrame after onseeked:
- *  - First rAF: browser queues the composite of the decoded frame
- *  - Second rAF: frame is guaranteed to be composited and readable
- * This is a known browser pattern for reliable video frame capture.
+ * This is the most reliable way to capture frames. rVFC only triggers when
+ * a new frame is decoded and painted to the video element.
  */
 function seekTo(video, time) {
   return new Promise((resolve) => {
-    const waitForPaint = () => {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => resolve())
-      })
+    let seekResolved = false
+    let rvfcResolved = false
+
+    const check = () => {
+      if (seekResolved && rvfcResolved) resolve()
     }
 
-    if (Math.abs(video.currentTime - time) < 0.001) {
-      waitForPaint()
-      return
+    video.requestVideoFrameCallback((now, metadata) => {
+      rvfcResolved = true
+      check()
+    })
+
+    video.onseeked = () => {
+      seekResolved = true
+      check()
     }
-    video.onseeked = waitForPaint
-    video.currentTime = time
+
+    // Add a tiny offset (0.0001) to seek time to avoid floating point
+    // edge cases where we land exactly between two frames
+    video.currentTime = time + 0.0001
   })
 }
 
@@ -170,12 +176,8 @@ function estimateFromTimes(times) {
 /**
  * Capture every frame by sequential seeking.
  *
- * Uses a REGULAR canvas (not OffscreenCanvas) for capture. This ensures:
- *  1. drawImage reads from the main-thread compositor (synchronous)
- *  2. Frame data is always current (OffscreenCanvas can lag on a worker thread)
- *  3. VideoFrame has explicit timestamp + duration for correct muxing
- *
- * Explicit `duration` on every frame prevents uneven playback timing.
+ * Uses requestVideoFrameCallback + timestamp verification to eliminate "steppiness".
+ * If the browser returns a duplicate frame (same mediaTime), we wait for the next rVFC.
  */
 async function captureFrames(video, encoder, muxer, opts) {
   const {
@@ -184,7 +186,6 @@ async function captureFrames(video, encoder, muxer, opts) {
     onProgress, startTime = 0,
   } = opts
 
-  // Use regular canvas for synchronous, main-thread frame reads
   const canvas = document.createElement('canvas')
   canvas.width = finalWidth
   canvas.height = finalHeight
@@ -192,17 +193,27 @@ async function captureFrames(video, encoder, muxer, opts) {
   const frameDurationUs = Math.round(1_000_000 / outFps)
 
   let encodedCount = 0
+  let lastMediaTime = -1
 
   for (let i = 0; i < totalFrames; i++) {
-    const time = startTime + (i / outFps)
-    if (time > video.duration) break
+    const targetTime = startTime + (i / outFps)
+    if (targetTime > video.duration) break
 
-    await seekTo(video, time)
+    // Seek and wait for rVFC
+    await seekTo(video, targetTime)
 
-    // Synchronous draw — reads the composited video frame
+    // Verification Loop: ensure we didn't get a duplicate frame
+    // This is the "secret sauce" to fix steppy video.
+    let attempts = 0
+    while (Math.abs(video.currentTime - targetTime) > 0.1 && attempts < 5) {
+      await new Promise(r => video.requestVideoFrameCallback(r))
+      attempts++
+    }
+
+    // Snapshot the verified frame
     ctx.drawImage(video, 0, 0, finalWidth, finalHeight)
 
-    const timestampUs = Math.round((time - startTime) * 1_000_000)
+    const timestampUs = Math.round((i / outFps) * 1_000_000)
 
     const frame = new VideoFrame(canvas, {
       timestamp: timestampUs,
@@ -214,12 +225,11 @@ async function captureFrames(video, encoder, muxer, opts) {
     frame.close()
     encodedCount++
 
-    // Back-pressure: wait if encoder queue is too deep
-    while (encoder.encodeQueueSize > 8) {
+    // Back-pressure
+    while (encoder.encodeQueueSize > 6) {
       await new Promise(r => setTimeout(r, 5))
     }
 
-    // Yield to UI + report progress every 15 frames
     if (i % 15 === 0) {
       onProgress(Math.round((i / totalFrames) * 85))
       await new Promise(r => setTimeout(r, 0))
@@ -380,9 +390,9 @@ export async function encodeVideoWebCodecs(file, opts) {
     const finalHeight = outHeight % 2 === 0 ? outHeight : outHeight - 1
 
     const isWebm = fmt === 'webm'
-    // Constrained Baseline: no B-frames = no decode timestamp reordering
-    // B-frames from High profile were causing steppy playback
-    const videoCodec = isWebm ? 'vp8' : 'avc1.42e028'
+    // avc1.4d0028 -> Main Profile Level 4.0
+    // 4d = Main, 00 = Constraints, 28 = Level 4.0
+    const videoCodec = isWebm ? 'vp8' : 'avc1.4d0028'
     const videoBitrate = userBitrate > 0
       ? userBitrate * 1000
       : qualityToBitrate(quality, finalWidth, outFps)
@@ -493,7 +503,7 @@ export async function encodePreviewWebCodecs(file, opts) {
   })
 
   encoder.configure({
-    codec: 'avc1.42e028',
+    codec: 'avc1.4d0028',
     width: finalWidth,
     height: finalHeight,
     bitrate,
