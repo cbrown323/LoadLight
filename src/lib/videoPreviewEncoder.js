@@ -6,7 +6,8 @@
  *  1. WebCodecs path (hardware-accelerated) — preferred
  *  2. ffmpeg.wasm fallback — GIF input or unsupported browsers
  */
-import { getFFmpeg } from './ffmpegLoader.js'
+import { getFFmpeg, formatFfmpegWorkerError } from './ffmpegLoader.js'
+import { preferFfmpegExportForFile } from './mediaIngest.js'
 import { supportsWebCodecs, encodePreviewWebCodecs } from './webCodecsEncoder.js'
 
 const PREVIEW_DURATION = 4
@@ -15,8 +16,10 @@ export async function encodeVideoPreview(file, opts, onProgress, onLog) {
   const { quality = 72, startTime = 0 } = opts
 
   // ── WebCodecs fast-path ──
+  // .mov / .avi / QuickTime: skip WebCodecs — element decode is flaky; same as full export.
   const isGif = file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif'
-  if (supportsWebCodecs() && !isGif) {
+  const forceFfmpeg = preferFfmpegExportForFile(file)
+  if (supportsWebCodecs() && !isGif && !forceFfmpeg) {
     onLog?.('🚀 Preview via WebCodecs (hardware-accelerated)…')
     try {
       onProgress?.(10)
@@ -33,6 +36,9 @@ export async function encodeVideoPreview(file, opts, onProgress, onLog) {
   }
 
   // ── ffmpeg.wasm fallback ──
+  if (forceFfmpeg) {
+    onLog?.('ℹ Preview via ffmpeg.wasm (.mov / .avi / QuickTime) — reliable vs browser decode.')
+  }
 
   const inExt     = isGif ? 'gif' : (file.name.split('.').pop().toLowerCase() || 'mp4')
   const ts        = Date.now()
@@ -40,8 +46,14 @@ export async function encodeVideoPreview(file, opts, onProgress, onLog) {
   const outputName = `prev_out_${ts}.mp4`
 
   onProgress?.(5)
-  onLog?.('Loading ffmpeg…')
-  const { ff, fetchFile, multiThreaded: mt } = await getFFmpeg(onLog)
+  onLog?.(
+    forceFfmpeg
+      ? 'Loading ffmpeg (single-threaded, QuickTime-safe)…'
+      : 'Loading ffmpeg…',
+  )
+  const { ff, fetchFile, multiThreaded: mt } = await getFFmpeg(onLog, {
+    preferSingleThread: forceFfmpeg,
+  })
 
   onLog?.('Writing file…')
   await ff.writeFile(inputName, await fetchFile(file))
@@ -68,7 +80,12 @@ export async function encodeVideoPreview(file, opts, onProgress, onLog) {
 
   onLog?.(`Encoding ${PREVIEW_DURATION}s clip from ${formatTime(ss)} (CRF ${crf}, ${mt ? 'MT ⚡' : 'ST'})…`)
   const t0  = performance.now()
-  const ret = await ff.exec(args)
+  let ret = 0
+  try {
+    ret = await ff.exec(args)
+  } catch (e) {
+    throw new Error(formatFfmpegWorkerError(e))
+  }
   const elapsed = ((performance.now() - t0) / 1000).toFixed(1)
 
   if (ret !== 0) {

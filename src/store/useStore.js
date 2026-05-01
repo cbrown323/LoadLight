@@ -3,7 +3,7 @@ import { runExport as _runExport }      from '../lib/exportEngine.js'
 import { schedulePreview, cancelPreview } from '../lib/previewEncoder.js'
 import { encodeVideoPreview } from '../lib/videoPreviewEncoder.js'
 import { savePreset, loadPreset, listPresets, deletePreset } from '../lib/presets.js'
-import { getEncodingMode } from '../lib/ffmpegLoader.js'
+import { getEncodingMode, formatFfmpegWorkerError } from '../lib/ffmpegLoader.js'
 import { validateIngestFile, isVideoLike, ingestExt } from '../lib/mediaIngest.js'
 import { decodeTiffToCanvas } from '../lib/tiffDecode.js'
 
@@ -234,7 +234,7 @@ const useStore = create((set, get) => ({
       })
     } catch (err) {
       console.error('Video preview failed:', err)
-      const errMsg = 'Preview failed: ' + err.message
+      const errMsg = 'Preview failed: ' + formatFfmpegWorkerError(err)
       get().appendLog('✗ ' + errMsg)
       set({ videoPreviewLoading: false, videoPreviewError: errMsg, videoPreviewLog: errMsg })
     }
@@ -394,12 +394,12 @@ const useStore = create((set, get) => ({
         },
         onFileError: (id, err) => {
           setFileStatus(id, 'error')
-          appendLog(`✗ ${files.find((f) => f.id === id)?.file.name}: ${err.message}`)
+          appendLog(`✗ ${files.find((f) => f.id === id)?.file.name}: ${formatFfmpegWorkerError(err)}`)
         },
         onLog: appendLog,
       })
     } catch (err) {
-      appendLog(`Fatal: ${err.message}`)
+      appendLog(`Fatal: ${formatFfmpegWorkerError(err)}`)
       console.error('Export failed:', err)
     }
 

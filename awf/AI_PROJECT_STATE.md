@@ -35,7 +35,7 @@ Use this checklist to ground Task Capsules in real paths (search `src/` if unsur
 - [x] **Canvas / static image preview:** [`CenterPanel.jsx`](../src/components/CenterPanel.jsx) — `VideoPreview` / `StaticPreview` inside `ZoomStage` (wheel zoom, pan, Fit)
 - [x] **Timeline / scrubber:** [`CenterPanel.jsx`](../src/components/CenterPanel.jsx) local state + `VideoPreview`; `prevScrub` synced while `playing` to avoid pause/jump glitches
 - [x] **Batch naming:** [`TopBar.jsx`](../src/components/TopBar.jsx) labeled field → `projectName` in [`useStore.js`](../src/store/useStore.js) (ZIP basename via [`exportEngine.js`](../src/lib/exportEngine.js))
-- [ ] **Export pipeline:** Entry points in `useStore` → `src/lib/exportEngine.js` and related encoders
+- [x] **Export pipeline:** Entry points in `useStore` → `src/lib/exportEngine.js` and related encoders
 
 ## Current System Map
 

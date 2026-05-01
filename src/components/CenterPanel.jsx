@@ -21,7 +21,11 @@ function InfoChips({ res, fmt, size, variant }) {
 
 // ─── VideoPreview ─────────────────────────────────────────
 // Module-scope so React never remounts it on parent re-renders.
-function VideoPreview({ src, loop, playing, scrubPct, onDuration, onTimeUpdate, isAfter }) {
+/**
+ * `ownsTimeline={false}`: this `<video>` follows scrub/ play state but does not push duration or
+ * currentTime into the parent (split view: short preview vs full-length original).
+ */
+function VideoPreview({ src, loop, playing, scrubPct, onDuration, onTimeUpdate, isAfter, ownsTimeline = true }) {
   const vidRef    = useRef(null)
   const prevSrc   = useRef(null)
   const isSeeking = useRef(false)
@@ -64,8 +68,12 @@ function VideoPreview({ src, loop, playing, scrubPct, onDuration, onTimeUpdate, 
       ref={vidRef}
       muted
       playsInline
-      onLoadedMetadata={() => { if (vidRef.current) onDuration(vidRef.current.duration) }}
+      onLoadedMetadata={() => {
+        if (!ownsTimeline || !vidRef.current) return
+        onDuration(vidRef.current.duration)
+      }}
       onTimeUpdate={() => {
+        if (!ownsTimeline) return
         if (isSeeking.current) { isSeeking.current = false; return }
         const vid = vidRef.current
         if (vid && vid.duration && isFinite(vid.duration)) onTimeUpdate(vid.currentTime / vid.duration)
@@ -302,6 +310,9 @@ export default function CenterPanel() {
   const [duration, setDuration] = useState(0)
   const [currentT, setCurrentT] = useState(0)
 
+  const timeRaf = useRef(0)
+  const pendingFrac = useRef(null)
+
   const fo      = files[activeIdx]
   const isVideo = !!(fo?.file && isVideoLike(fo.file))
   const ext     = fo ? getExt(fo.file.name) : ''
@@ -312,6 +323,9 @@ export default function CenterPanel() {
   useEffect(() => {
     if (!fo || fo.id === prevId.current) return
     prevId.current = fo.id
+    if (timeRaf.current) cancelAnimationFrame(timeRaf.current)
+    timeRaf.current = 0
+    pendingFrac.current = null
     setPlaying(false); setScrubPct(0); setCurrentT(0); setDuration(0)
   }, [fo])
 
@@ -329,8 +343,18 @@ export default function CenterPanel() {
     return () => window.removeEventListener('keydown', onKey)
   }, [isVideo, loopPlayback, setLoopPlayback])
 
-  const handleDuration   = useCallback((d)    => setDuration(d), [])
-  const handleTimeUpdate = useCallback((frac) => { setCurrentT(frac); setScrubPct(frac * 100) }, [])
+  const handleDuration = useCallback((d) => setDuration(d), [])
+  const handleTimeUpdate = useCallback((frac) => {
+    pendingFrac.current = frac
+    if (timeRaf.current) return
+    timeRaf.current = requestAnimationFrame(() => {
+      timeRaf.current = 0
+      const f = pendingFrac.current
+      if (f == null) return
+      setCurrentT(f)
+      setScrubPct(f * 100)
+    })
+  }, [])
 
   function seekScrubber(e) {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -348,6 +372,9 @@ export default function CenterPanel() {
 
   const showBefore = viewMode === 'before' || viewMode === 'split'
   const showAfter  = viewMode === 'after'  || viewMode === 'split'
+  /** Only one `<video>` may advance scrubber % during play — avoid split-view duel between full clip and short preview. */
+  const beforeDrivesTimeline = showBefore && isVideo && viewMode !== 'after'
+  const afterDrivesTimeline    = isVideo && viewMode === 'after'
 
   return (
     <section className={s.panel}>
@@ -360,7 +387,8 @@ export default function CenterPanel() {
             <ZoomStage resetKey={`${fo?.id || 'none'}-before`}>
               {isVideo
                 ? <VideoPreview src={fo?.previewUrl} loop={loopPlayback} playing={playing}
-                    scrubPct={scrubPct} onDuration={handleDuration} onTimeUpdate={handleTimeUpdate} isAfter={false} />
+                    scrubPct={scrubPct} onDuration={handleDuration} onTimeUpdate={handleTimeUpdate} isAfter={false}
+                    ownsTimeline={beforeDrivesTimeline} />
                 : <StaticPreview src={fo?.previewUrl} isAfter={false} />
               }
             </ZoomStage>
@@ -388,6 +416,7 @@ export default function CenterPanel() {
                       onDuration={handleDuration}
                       onTimeUpdate={handleTimeUpdate}
                       isAfter={true}
+                      ownsTimeline={afterDrivesTimeline}
                     />
                   : <VideoAfterPlaceholder
                       loading={videoPreviewLoading}
@@ -436,9 +465,11 @@ export default function CenterPanel() {
           onClick={() => { setScrubPct(0); setCurrentT(0); setPlaying(false) }} disabled={!isVideo}>
           ⏮
         </button>
-        <div className={s.scrubber}
+        <div
+          className={`${s.scrubber} ${playing && isVideo ? s.scrubberPlaying : ''}`}
           style={{ opacity: isVideo ? 1 : 0.3, pointerEvents: isVideo ? 'auto' : 'none' }}
-          onClick={seekScrubber}>
+          onClick={seekScrubber}
+        >
           <div className={s.scrubFill}  style={{ width: scrubPct + '%' }} />
           <div className={s.scrubThumb} style={{ left:  scrubPct + '%' }} />
         </div>

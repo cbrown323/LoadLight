@@ -179,7 +179,7 @@
   height: 100%;
   background: var(--cyan);
   border-radius: 2px;
-  transition: width 0.1s;
+  transition: width 0.12s ease-out;
 }
 .scrubThumb {
   width: 10px;
@@ -189,8 +189,14 @@
   position: absolute;
   top: 50%;
   transform: translate(-50%, -50%);
-  transition: left 0.1s;
+  transition: left 0.12s ease-out;
   pointer-events: none;
+}
+
+/* During play, timeupdate is irregular — CSS transitions fight updates and jitter. */
+.scrubberPlaying .scrubFill,
+.scrubberPlaying .scrubThumb {
+  transition: none;
 }
 
 .vcTime {

@@ -86,7 +86,9 @@ export default function BottomBar() {
             color: encodingMode === 'webcodecs' ? '#22d3a0' : '#94a3b8',
             opacity: 0.8,
           }}>
-            {encodingMode === 'webcodecs' ? '⚡ Hardware Accelerated' : '🔧 Software Encoding'}
+            {encodingMode === 'webcodecs'
+              ? '⚡ WebCodecs ready (GPU path when used)'
+              : '🔧 WASM / ffmpeg (no WebCodecs)'}
           </span>
         </div>
       </div>

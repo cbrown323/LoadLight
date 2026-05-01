@@ -8,7 +8,7 @@
  * WebCodecs path: 10–50× faster via GPU/hardware encoder
  * WASM path:      universal fallback, handles GIF + old browsers
  */
-import { getFFmpeg } from './ffmpegLoader.js'
+import { getFFmpeg, formatFfmpegWorkerError } from './ffmpegLoader.js'
 import { supportsWebCodecs, encodeVideoWebCodecs } from './webCodecsEncoder.js'
 import { preferFfmpegExportForFile } from './mediaIngest.js'
 
@@ -17,6 +17,29 @@ import { preferFfmpegExportForFile } from './mediaIngest.js'
  * Range: quality 100 → CRF 18 (best), quality 0 → CRF 40 (worst)
  */
 function qualityToCRF(q) { return Math.round(40 - (q / 100) * 22) }
+
+/** @param {{ ffprobe: Function, readFile: Function, deleteFile: Function }} ff */
+async function probeInputDurationSec(ff, inputName) {
+  const outName = `_probe_${Date.now()}.txt`
+  try {
+    const ret = await ff.ffprobe([
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1',
+      inputName,
+      '-o', outName,
+    ])
+    if (ret !== 0) return 0
+    const data = await ff.readFile(outName)
+    try { await ff.deleteFile(outName) } catch (_) {}
+    const text = new TextDecoder().decode(data)
+    const n = parseFloat(String(text).trim())
+    return Number.isFinite(n) && n > 0 ? n : 0
+  } catch {
+    try { await ff.deleteFile(outName) } catch (_) {}
+    return 0
+  }
+}
 
 function buildArgs(inputName, outputName, { quality, fps, width, bitrate, format, isGif, mt }) {
   const args = []
@@ -110,16 +133,32 @@ export async function encodeVideo(file, opts) {
   const inputName = `in_${Date.now()}.${inExt}`
 
   onProgress(2)
-  const { ff, fetchFile, multiThreaded: mt } = await getFFmpeg(onLog)
-  onLog(`Mode: ${mt ? 'multi-threaded ⚡' : 'single-threaded'}`)
+  const useStableCore = preferFfmpegExportForFile(file)
+  const { ff, fetchFile, multiThreaded: mt } = await getFFmpeg(onLog, {
+    preferSingleThread: useStableCore,
+  })
+  onLog(
+    useStableCore
+      ? 'Mode: single-threaded (QuickTime / AVI — reliable wasm path)'
+      : `Mode: ${mt ? 'multi-threaded ⚡' : 'single-threaded'}`,
+  )
 
   onLog(`Writing ${file.name} to virtual FS…`)
   const fileData = await fetchFile(file)
   await ff.writeFile(inputName, fileData)
   onProgress(10)
 
+  const durSec = await probeInputDurationSec(ff, inputName)
+  if (durSec > 0) onLog(`Input duration: ${durSec.toFixed(1)}s`)
+
   const targetWidths = widths.length > 0 ? widths : [0]
   const results = []
+  const nOut = targetWidths.length
+  /** Wall-clock rough budget for wasm (VP8 is much slower than x264 here). */
+  const estWallSec =
+    durSec > 0
+      ? durSec * (fmt === 'webm' ? 10 : 2.5)
+      : Math.max(120, (file.size / 1024 / 1024) * 30)
 
   for (let i = 0; i < targetWidths.length; i++) {
     const w          = targetWidths[i]
@@ -127,11 +166,43 @@ export async function encodeVideo(file, opts) {
     const crf        = qualityToCRF(quality)
     onLog(`Encoding ${w > 0 ? w + 'px' : 'original'} @ CRF ${crf}…`)
 
-    const t0   = performance.now()
+    const slice = 88 / nOut
+    const basePct = 10 + i * slice
+    let mono = basePct
+
+    const bump = (p) => {
+      const v = Math.min(99, Math.max(mono, Math.round(p)))
+      mono = v
+      onProgress(v)
+    }
+
+    const progressHandler = ({ progress: fp }) => {
+      const p = typeof fp === 'number' && !Number.isNaN(fp) ? Math.min(1, Math.max(0, fp)) : 0
+      bump(basePct + p * slice * 0.92)
+    }
+    ff.on('progress', progressHandler)
+
+    const t0 = performance.now()
+    const tick = setInterval(() => {
+      const elapsed = (performance.now() - t0) / 1000
+      const frac = Math.min(0.92, elapsed / Math.max(45, estWallSec))
+      bump(basePct + frac * slice * 0.92)
+    }, 2000)
+
     const args = buildArgs(inputName, outputName, { quality, fps, width: w, bitrate, format: fmt, isGif, mt })
     onLog(`args: ${args.join(' ')}`)
 
-    const ret = await ff.exec(args)
+    let ret = -1
+    try {
+      ret = await ff.exec(args)
+    } catch (execErr) {
+      onLog(`✗ ffmpeg exec: ${formatFfmpegWorkerError(execErr)}`)
+      throw execErr instanceof Error ? execErr : new Error(formatFfmpegWorkerError(execErr))
+    } finally {
+      clearInterval(tick)
+      ff.off('progress', progressHandler)
+    }
+
     const elapsed = ((performance.now() - t0) / 1000).toFixed(1)
 
     if (ret !== 0) {
@@ -140,11 +211,13 @@ export async function encodeVideo(file, opts) {
       onLog(`✓ Encoded in ${elapsed}s`)
     }
 
+    bump(basePct + slice * 0.95)
+
     let data
     try {
       data = await ff.readFile(outputName)
     } catch (readErr) {
-      onLog(`✗ Failed to read ${outputName}: ${readErr.message}`)
+      onLog(`✗ Failed to read ${outputName}: ${formatFfmpegWorkerError(readErr)}`)
       continue
     }
 
@@ -158,10 +231,19 @@ export async function encodeVideo(file, opts) {
     const filename = targetWidths.length > 1 && w > 0 ? `${baseName}-${w}.${fmt}` : `${baseName}.${fmt}`
     results.push({ filename, blob, width: w })
     try { await ff.deleteFile(outputName) } catch (_) {}
-    onProgress(10 + Math.round(((i + 1) / targetWidths.length) * 88))
+    bump(10 + Math.round(((i + 1) / nOut) * 88))
   }
 
   try { await ff.deleteFile(inputName) } catch (_) {}
+
+  if (results.length === 0) {
+    throw new Error(
+      fmt === 'webm'
+        ? 'WebM export produced no file. Long clips in the browser are very slow with VP8; try format “Auto” or MP4 for a faster, reliable export.'
+        : 'Video encoding produced no output. Try a shorter clip, MP4, or lower resolution.',
+    )
+  }
+
   onProgress(100)
   return results
 }
