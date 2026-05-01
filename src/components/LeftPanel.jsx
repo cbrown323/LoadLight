@@ -1,11 +1,12 @@
 import React, { useRef, useCallback } from 'react'
 import useStore, { fmtBytes, getExt, isPortrait } from '../store/useStore'
+import { MEDIA_INPUT_ACCEPT, isVideoLike } from '../lib/mediaIngest.js'
 import s from './LeftPanel.module.css'
 
 const BADGE_CLASS = {
   gif: s.badgeGif, png: s.badgePng, jpg: s.badgeJpg, jpeg: s.badgeJpg,
-  mp4: s.badgeMp4, webm: s.badgeMp4, mov: s.badgeMp4,
-  webp: s.badgeWebp, avif: s.badgeWebp,
+  mp4: s.badgeMp4, webm: s.badgeMp4, mov: s.badgeMp4, avi: s.badgeMp4,
+  webp: s.badgeWebp, avif: s.badgeWebp, tif: s.badgePng, tiff: s.badgePng,
 }
 
 function FileBadge({ ext }) {
@@ -62,7 +63,7 @@ function GroupDivider({ label, count }) {
 }
 
 export default function LeftPanel() {
-  const { files, activeIdx, addFiles, applyPreset } = useStore()
+  const { files, activeIdx, addFiles, applyPreset, ingestNotice, clearIngestNotice } = useStore()
   const inputRef  = useRef()
   const folderRef = useRef()
   const [dragging, setDragging] = React.useState(false)
@@ -73,7 +74,7 @@ export default function LeftPanel() {
   const handleInput = (e) => { addFiles(e.target.files); e.target.value = '' }
 
   // Sort: images first, then video/gif
-  const isVideoFile = (fo) => fo.file.type.startsWith('video/') || fo.file.name.toLowerCase().endsWith('.gif')
+  const isVideoFile = (fo) => isVideoLike(fo.file)
   const images = files.map((fo, i) => ({ fo, i })).filter(({ fo }) => !isVideoFile(fo))
   const videos = files.map((fo, i) => ({ fo, i })).filter(({ fo }) => isVideoFile(fo))
 
@@ -88,7 +89,7 @@ export default function LeftPanel() {
         </div>
       </div>
 
-      <input ref={inputRef} type="file" multiple accept="image/*,video/*,.gif,.webp,.avif"
+      <input ref={inputRef} type="file" multiple accept={MEDIA_INPUT_ACCEPT}
         style={{ display: 'none' }} onChange={handleInput} />
       <input ref={folderRef} type="file" webkitdirectory="" multiple
         style={{ display: 'none' }} onChange={handleInput} />
@@ -101,8 +102,15 @@ export default function LeftPanel() {
         onClick={() => inputRef.current.click()}
       >
         <div className={s.dropIcon}>⬆</div>
-        <div className={s.dropText}>Drop images, GIFs or video here</div>
+        <div className={s.dropText}>Drop images (incl. TIFF), GIFs, or video (MP4, WebM, MOV, AVI)</div>
       </div>
+
+      {ingestNotice && (
+        <div className={s.ingestBanner} role="status">
+          <span className={s.ingestBannerText}>{ingestNotice}</span>
+          <button type="button" className={s.ingestDismiss} onClick={() => clearIngestNotice()} aria-label="Dismiss">×</button>
+        </div>
+      )}
 
       <div className={s.fileList}>
         {files.length === 0 ? (

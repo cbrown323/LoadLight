@@ -33,20 +33,40 @@
   flex-shrink: 0;
 }
 
+.batchNameBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 200px;
+  max-width: min(320px, 28vw);
+}
+.batchNameLabel {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
 .projectName {
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
   background: var(--bg-surface);
   border: 1px solid var(--border);
-  padding: 3px 10px;
+  padding: 6px 12px;
   border-radius: var(--radius);
   outline: none;
-  transition: border-color 0.15s, color 0.15s;
-  width: 160px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  width: 100%;
+  box-sizing: border-box;
+}
+.projectName::placeholder {
+  color: var(--text-muted);
+  font-weight: 400;
 }
 .projectName:focus {
   border-color: var(--border-cyan);
-  color: var(--text-primary);
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.12);
 }
 
 .spacer { flex: 1; }

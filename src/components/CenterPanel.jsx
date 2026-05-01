@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import useStore, { fmtBytes, getExt, estimateOutputSize } from '../store/useStore'
+import { isVideoLike } from '../lib/mediaIngest.js'
 import s from './CenterPanel.module.css'
 
 // ─── InfoChips ────────────────────────────────────────────
@@ -46,7 +47,10 @@ function VideoPreview({ src, loop, playing, scrubPct, onDuration, onTimeUpdate, 
 
   const prevScrub = useRef(scrubPct)
   useEffect(() => {
-    if (playing) return
+    if (playing) {
+      prevScrub.current = scrubPct
+      return
+    }
     if (scrubPct === prevScrub.current) return
     prevScrub.current = scrubPct
     const vid = vidRef.current
@@ -188,6 +192,100 @@ function VideoAfterPlaceholder({ loading, pct, log, error, onEncode, startTime, 
   )
 }
 
+/** Wheel zoom + drag pan on the preview surface; resets when `resetKey` changes. */
+function ZoomStage({ resetKey, children }) {
+  const wrapRef = useRef(null)
+  const [scale, setScale] = useState(1)
+  const [tx, setTx] = useState(0)
+  const [ty, setTy] = useState(0)
+  const drag = useRef({ on: false, sx: 0, sy: 0, tx0: 0, ty0: 0 })
+
+  useEffect(() => {
+    setScale(1)
+    setTx(0)
+    setTy(0)
+  }, [resetKey])
+
+  const clampPan = useCallback((nextScale, nx, ny) => {
+    const el = wrapRef.current
+    if (!el || nextScale <= 1) return { x: 0, y: 0 }
+    const maxX = ((nextScale - 1) * el.clientWidth) / 2
+    const maxY = ((nextScale - 1) * el.clientHeight) / 2
+    return {
+      x: Math.max(-maxX, Math.min(maxX, nx)),
+      y: Math.max(-maxY, Math.min(maxY, ny)),
+    }
+  }, [])
+
+  const onWheel = (e) => {
+    e.preventDefault()
+    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12
+    setScale((prev) => {
+      const next = Math.min(4, Math.max(1, prev * factor))
+      if (next <= 1) {
+        setTx(0)
+        setTy(0)
+      } else {
+        const p = clampPan(next, tx, ty)
+        setTx(p.x)
+        setTy(p.y)
+      }
+      return next
+    })
+  }
+
+  const onPointerDown = (e) => {
+    if (scale <= 1) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    drag.current = { on: true, sx: e.clientX, sy: e.clientY, tx0: tx, ty0: ty }
+  }
+  const onPointerMove = (e) => {
+    if (!drag.current.on) return
+    const dx = e.clientX - drag.current.sx
+    const dy = e.clientY - drag.current.sy
+    const p = clampPan(scale, drag.current.tx0 + dx, drag.current.ty0 + dy)
+    setTx(p.x)
+    setTy(p.y)
+  }
+  const endDrag = (e) => {
+    try { e.currentTarget.releasePointerCapture(e.pointerId) } catch (_) {}
+    drag.current.on = false
+  }
+
+  return (
+    <div
+      ref={wrapRef}
+      className={s.zoomViewport}
+      onWheel={onWheel}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+    >
+      <div
+        className={s.zoomInner}
+        style={{
+          transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+        }}
+      >
+        {children}
+      </div>
+      <div className={s.zoomToolbar}>
+        <button type="button" className={s.zoomBtn} title="Zoom out"
+          onClick={() => setScale((z) => {
+            const n = Math.max(1, z / 1.2)
+            if (n <= 1) { setTx(0); setTy(0) }
+            return n
+          })}>−</button>
+        <button type="button" className={s.zoomBtn} title="Zoom in"
+          onClick={() => setScale((z) => Math.min(4, z * 1.2))}>+</button>
+        <button type="button" className={s.zoomBtn} title="Reset zoom / pan"
+          onClick={() => { setScale(1); setTx(0); setTy(0) }}>Fit</button>
+      </div>
+    </div>
+  )
+}
+
 // ─── CenterPanel ──────────────────────────────────────────
 export default function CenterPanel() {
   const {
@@ -205,7 +303,7 @@ export default function CenterPanel() {
   const [currentT, setCurrentT] = useState(0)
 
   const fo      = files[activeIdx]
-  const isVideo = !!(fo?.file.type.startsWith('video/') || fo?.file.name?.toLowerCase().endsWith('.gif'))
+  const isVideo = !!(fo?.file && isVideoLike(fo.file))
   const ext     = fo ? getExt(fo.file.name) : ''
   const hasVideoPreview = isVideo && !!fo?.afterUrl
 
@@ -259,11 +357,13 @@ export default function CenterPanel() {
         {showBefore && (
           <div className={s.side}>
             <div className={s.label}>Original</div>
-            {isVideo
-              ? <VideoPreview src={fo?.previewUrl} loop={loopPlayback} playing={playing}
-                  scrubPct={scrubPct} onDuration={handleDuration} onTimeUpdate={handleTimeUpdate} isAfter={false} />
-              : <StaticPreview src={fo?.previewUrl} isAfter={false} />
-            }
+            <ZoomStage resetKey={`${fo?.id || 'none'}-before`}>
+              {isVideo
+                ? <VideoPreview src={fo?.previewUrl} loop={loopPlayback} playing={playing}
+                    scrubPct={scrubPct} onDuration={handleDuration} onTimeUpdate={handleTimeUpdate} isAfter={false} />
+                : <StaticPreview src={fo?.previewUrl} isAfter={false} />
+              }
+            </ZoomStage>
             {fo && <InfoChips res={res} fmt={ext.toUpperCase()} size={fmtBytes(fo.file.size)} variant="before" />}
           </div>
         )}
@@ -277,31 +377,33 @@ export default function CenterPanel() {
               {outFmt} · {hasVideoPreview ? '4s Preview' : 'Optimized'}
             </div>
 
-            {isVideo ? (
-              hasVideoPreview
-                ? <VideoPreview
-                    src={fo.afterUrl}
-                    loop={loopPlayback}
-                    playing={playing}
-                    scrubPct={scrubPct}
-                    onDuration={handleDuration}
-                    onTimeUpdate={handleTimeUpdate}
-                    isAfter={true}
-                  />
-                : <VideoAfterPlaceholder
-                    loading={videoPreviewLoading}
-                    pct={videoPreviewPct}
-                    log={videoPreviewLog}
-                    error={videoPreviewError}
-                    onEncode={encodeVideoPreview}
-                    startTime={previewStartTime}
-                    onStartTimeChange={setPreviewStartTime}
-                    duration={duration}
-                    scrubPct={scrubPct}
-                  />
-            ) : (
-              <StaticPreview src={afterUrl} isAfter={true} loading={previewLoading} />
-            )}
+            <ZoomStage resetKey={`${fo?.id || 'none'}-after`}>
+              {isVideo ? (
+                hasVideoPreview
+                  ? <VideoPreview
+                      src={fo.afterUrl}
+                      loop={loopPlayback}
+                      playing={playing}
+                      scrubPct={scrubPct}
+                      onDuration={handleDuration}
+                      onTimeUpdate={handleTimeUpdate}
+                      isAfter={true}
+                    />
+                  : <VideoAfterPlaceholder
+                      loading={videoPreviewLoading}
+                      pct={videoPreviewPct}
+                      log={videoPreviewLog}
+                      error={videoPreviewError}
+                      onEncode={encodeVideoPreview}
+                      startTime={previewStartTime}
+                      onStartTimeChange={setPreviewStartTime}
+                      duration={duration}
+                      scrubPct={scrubPct}
+                    />
+              ) : (
+                <StaticPreview src={afterUrl} isAfter={true} loading={previewLoading} />
+              )}
+            </ZoomStage>
 
             {fo && (
               <InfoChips

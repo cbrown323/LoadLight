@@ -172,6 +172,41 @@
 .actionBtn:hover { border-color: var(--red); color: var(--red); }
 .actionBtn.dup:hover { border-color: var(--cyan); color: var(--cyan); }
 
+.ingestBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 10px 8px;
+  padding: 8px 10px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius);
+  font-size: 11px;
+  color: var(--text-primary);
+  line-height: 1.35;
+}
+.ingestBannerText {
+  flex: 1;
+  min-width: 0;
+}
+.ingestDismiss {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ingestDismiss:hover {
+  border-color: var(--border-cyan);
+  color: var(--cyan);
+}
+
 .batchControls {
   padding: 10px 12px;
   border-top: 1px solid var(--border);

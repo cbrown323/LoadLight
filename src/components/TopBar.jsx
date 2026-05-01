@@ -72,8 +72,18 @@ export default function TopBar() {
           <ReleaseNotes />
         </div>
 
-        <input className={s.projectName} value={projectName}
-          onChange={(e) => setProjectName(e.target.value)} spellCheck={false} />
+        <div className={s.batchNameBlock}>
+          <label className={s.batchNameLabel} htmlFor="loadlight-batch-name">Batch name</label>
+          <input
+            id="loadlight-batch-name"
+            className={s.projectName}
+            value={projectName}
+            onChange={(e) => setProjectName(e.target.value)}
+            spellCheck={false}
+            placeholder="e.g. hero-images-apr"
+            title="Used as the ZIP / export download name"
+          />
+        </div>
 
         <div className={s.spacer} />
 

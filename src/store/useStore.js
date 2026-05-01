@@ -4,6 +4,7 @@ import { schedulePreview, cancelPreview } from '../lib/previewEncoder.js'
 import { encodeVideoPreview } from '../lib/videoPreviewEncoder.js'
 import { savePreset, loadPreset, listPresets, deletePreset } from '../lib/presets.js'
 import { getEncodingMode } from '../lib/ffmpegLoader.js'
+import { validateIngestFile, isVideoLike, ingestExt } from '../lib/mediaIngest.js'
 
 // ── helpers ───────────────────────────────────────────────
 export function fmtBytes(b) {
@@ -18,7 +19,7 @@ export function getExt(name) { return name.split('.').pop().toLowerCase() }
 // Kept for the stats bar when no real size is known yet
 export function estimateOutputSize(file, quality) {
   const q       = quality / 100
-  const isVideo = file.type.startsWith('video/')
+  const isVideo = isVideoLike(file)
   const ratio   = isVideo ? 0.15 + q * 0.25 : 0.08 + q * 0.35
   return Math.round(file.size * ratio)
 }
@@ -87,11 +88,20 @@ const useStore = create((set, get) => ({
   encodingMode: getEncodingMode(), // 'webcodecs' or 'wasm'
 
   // ── files ──────────────────────────────────────────────
-  files:     [],
-  activeIdx: -1,
+  files:         [],
+  activeIdx:     -1,
+  ingestNotice:  null,
+
+  clearIngestNotice: () => set({ ingestNotice: null }),
 
   addFiles: (newFiles) => {
+    const reasons = []
     Array.from(newFiles).forEach((file) => {
+      const v = validateIngestFile(file)
+      if (!v.ok) {
+        reasons.push(v.reason)
+        return
+      }
       const fo = {
         file,
         thumbUrl:   null,
@@ -114,6 +124,12 @@ const useStore = create((set, get) => ({
         get()._refreshPreview(updated)
       })
     })
+    if (reasons.length) {
+      const msg = reasons.length === 1
+        ? reasons[0]
+        : `${reasons.length} file(s) skipped: ${reasons[0]}`
+      set({ ingestNotice: msg })
+    }
   },
 
   removeFile: (id) => set((s) => {
@@ -159,7 +175,7 @@ const useStore = create((set, get) => ({
   _refreshPreview: (fo) => {
     if (!fo) return
     const { format, quality, advResolution } = get()
-    const isVideo = fo.file.type.startsWith('video/') || fo.file.name.toLowerCase().endsWith('.gif')
+    const isVideo = isVideoLike(fo.file)
     if (isVideo) return   // no re-encoding for video preview
 
     set({ previewLoading: true })
@@ -189,7 +205,7 @@ const useStore = create((set, get) => ({
     const state = get()
     const fo = state.files[state.activeIdx]
     if (!fo) return
-    const isVideo = fo.file.type.startsWith('video/') || fo.file.name.toLowerCase().endsWith('.gif')
+    const isVideo = isVideoLike(fo.file)
     if (!isVideo || state.videoPreviewLoading) return
 
     set({ videoPreviewLoading: true, videoPreviewPct: 0, videoPreviewLog: '', videoPreviewError: null })
@@ -390,13 +406,55 @@ const useStore = create((set, get) => ({
 // ── thumbnail generator ───────────────────────────────────
 function generateThumb(fo, cb) {
   const { file } = fo
+  const ext = ingestExt(file.name)
+
+  if (ext === 'tif' || ext === 'tiff') {
+    createImageBitmap(file)
+      .then((bmp) => {
+        const w = bmp.width
+        const h = bmp.height
+        const thumb = document.createElement('canvas')
+        const ts = Math.min(80 / w, 60 / h, 1)
+        thumb.width = Math.max(1, Math.round(w * ts))
+        thumb.height = Math.max(1, Math.round(h * ts))
+        thumb.getContext('2d').drawImage(bmp, 0, 0, thumb.width, thumb.height)
+        const thumbUrl = thumb.toDataURL('image/jpeg', 0.85)
+        const maxPrev = 2048
+        const ps = Math.min(1, maxPrev / w, maxPrev / h)
+        const pw = Math.round(w * ps)
+        const ph = Math.round(h * ps)
+        const prev = document.createElement('canvas')
+        prev.width = pw
+        prev.height = ph
+        prev.getContext('2d').drawImage(bmp, 0, 0, pw, ph)
+        bmp.close?.()
+        prev.toBlob((blob) => {
+          if (!blob) {
+            cb({ ...fo, thumbUrl, previewUrl: null, width: w, height: h })
+            return
+          }
+          cb({ ...fo, thumbUrl, previewUrl: URL.createObjectURL(blob), width: w, height: h })
+        }, 'image/png')
+      })
+      .catch(() => {
+        cb({
+          ...fo,
+          thumbUrl:   null,
+          previewUrl: null,
+          width:      0,
+          height:     0,
+        })
+      })
+    return
+  }
+
   if (file.type.startsWith('image/') || file.name.toLowerCase().endsWith('.gif')) {
     const url = URL.createObjectURL(file)
     const img = new Image()
     img.onload  = () => cb({ ...fo, thumbUrl: url, previewUrl: url, width: img.width, height: img.height })
     img.onerror = () => cb({ ...fo, previewUrl: url, thumbUrl: url })
     img.src = url
-  } else if (file.type.startsWith('video/')) {
+  } else if (isVideoLike(file)) {
     const url = URL.createObjectURL(file)
     const vid = document.createElement('video')
     vid.src = url; vid.muted = true; vid.playsInline = true; vid.currentTime = 0.5
@@ -406,7 +464,7 @@ function generateThumb(fo, cb) {
       c.getContext('2d').drawImage(vid, 0, 0, 80, 60)
       cb({ ...fo, thumbUrl: c.toDataURL(), previewUrl: url, width: vid.videoWidth, height: vid.videoHeight, duration: vid.duration })
     }
-    vid.onerror = () => cb({ ...fo, previewUrl: url })
+    vid.onerror = () => cb({ ...fo, previewUrl: url, thumbUrl: null })
     vid.load()
   } else {
     cb(fo)

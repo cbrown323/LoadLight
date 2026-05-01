@@ -18,10 +18,57 @@
   flex: 1;
   position: relative;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   justify-content: center;
   overflow: hidden;
   padding: 12px;
+}
+
+.zoomViewport {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+.zoomViewport:active {
+  cursor: grabbing;
+}
+.zoomInner {
+  transform-origin: center center;
+  will-change: transform;
+}
+.zoomToolbar {
+  position: absolute;
+  top: 40px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+  z-index: 6;
+}
+.zoomBtn {
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.75);
+  color: var(--text-secondary);
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+.zoomBtn:hover {
+  border-color: var(--border-cyan);
+  color: var(--cyan);
 }
 
 .label {

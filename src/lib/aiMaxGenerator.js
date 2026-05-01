@@ -1,3 +1,5 @@
+import { isVideoLike } from './mediaIngest.js'
+
 /**
  * aiMaxGenerator.js v2.1
  *
@@ -65,7 +67,7 @@ export async function buildAiMaxSnippet(files, { format, breakpoints = [], respo
 
   for (let i = 0; i < files.length; i++) {
     const fo      = files[i]
-    const isVideo = fo.file.type.startsWith('video/') || fo.file.name.toLowerCase().endsWith('.gif')
+    const isVideo = isVideoLike(fo.file)
     const isGif   = fo.file.name.toLowerCase().endsWith('.gif')
     const type    = isVideo ? 'vid' : 'img'
     const name    = fo.file.name.replace(/\.[^.]+$/, '')

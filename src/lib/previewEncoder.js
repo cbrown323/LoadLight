@@ -9,6 +9,7 @@
  */
 
 import { encodeImage, resolveFormat } from './imageEncoder.js'
+import { isVideoLike } from './mediaIngest.js'
 
 // Debounce timer shared across calls
 let _timer = null
@@ -32,9 +33,7 @@ export function cancelPreview() {
 
 async function _encode(file, settings, onResult, onStart) {
   // Only encode images — videos stay as-is in preview
-  const isVideo = file.type.startsWith('video/')
-  const isGif   = file.name.toLowerCase().endsWith('.gif')
-  if (isVideo || isGif) return
+  if (isVideoLike(file)) return
 
   const fmt = resolveFormat(file, settings.format)
   if (fmt === 'mp4' || fmt === 'webm') return

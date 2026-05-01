@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import useStore, { getExt, qualityZone, isPortrait } from '../store/useStore'
 import { buildAiMaxSnippet } from '../lib/aiMaxGenerator.js'
+import { isVideoLike } from '../lib/mediaIngest.js'
 import Toggle from './Toggle'
 import s from './RightPanel.module.css'
 
@@ -25,7 +26,7 @@ function buildHtmlSnippet(files, format, breakpoints, responsiveMode) {
   const lines = []
 
   files.forEach((fo) => {
-    const isVideo = fo.file.type.startsWith('video/') || fo.file.name.toLowerCase().endsWith('.gif')
+    const isVideo = isVideoLike(fo.file)
     const name    = fo.file.name.replace(/\.[^.]+$/, '')
     const fmt     = format === 'auto' ? (isVideo ? 'mp4' : 'webp') : format
 
@@ -80,7 +81,7 @@ export default function RightPanel() {
 
   const fo      = files[activeIdx]
   const srcW    = fo?.width || 0
-  const outExt  = format === 'auto' ? 'webp' : format
+  const outExt  = format === 'auto' ? (fo && isVideoLike(fo.file) ? 'mp4' : 'webp') : format
   const zone    = qualityZone(quality)
 
   // Rebuild AI Max preview whenever toggle turns on or files/settings change

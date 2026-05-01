@@ -8,12 +8,13 @@ import { buildAiMaxSnippet } from './aiMaxGenerator.js'
 import { encodeImage, resolveFormat } from './imageEncoder.js'
 import { encodeVideo } from './videoEncoder.js'
 import { resolveWithFallback } from './formatSupport.js'
+import { isVideoLike } from './mediaIngest.js'
 
 // ── Combined HTML snippet for ALL files ───────────────────
 function buildCombinedSnippet(fileResults, format, breakpointWidths, useResponsive) {
   const lines = []
   fileResults.forEach(({ fo, resolvedFmt, safeWidths }) => {
-    const isVideo = fo.file.type.startsWith('video/') || fo.file.name.toLowerCase().endsWith('.gif')
+    const isVideo = isVideoLike(fo.file)
     const name    = fo.file.name.replace(/\.[^.]+$/, '')
     const fmt     = resolvedFmt
 
@@ -98,7 +99,7 @@ export async function runExport(params) {
 
     try {
       const isGif   = file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif'
-      const isVideo = file.type.startsWith('video/')
+      const isVideo = isVideoLike(file)
 
       let rawFmt = resolveFormat(file, format)
       if (smartFormat && format === 'auto') {

@@ -10,6 +10,8 @@
  *     block artifacts at lower settings
  */
 
+import { isVideoLike, ingestExt } from './mediaIngest.js'
+
 const MIME = {
   webp: 'image/webp',
   avif: 'image/avif',
@@ -20,13 +22,25 @@ const MIME = {
 
 export function resolveFormat(file, formatSetting) {
   if (formatSetting !== 'auto') return formatSetting
-  const isGif   = file.name.toLowerCase().endsWith('.gif')
-  const isVideo = file.type.startsWith('video/')
-  if (isVideo || isGif) return 'mp4'
+  const isGif = file.name.toLowerCase().endsWith('.gif')
+  if (isVideoLike(file) || isGif) return 'mp4'
   return 'webp'
 }
 
 function loadImage(file) {
+  const ext = ingestExt(file.name)
+  if (ext === 'tif' || ext === 'tiff') {
+    return createImageBitmap(file)
+      .then((bmp) => {
+        const c = document.createElement('canvas')
+        c.width = bmp.width
+        c.height = bmp.height
+        c.getContext('2d').drawImage(bmp, 0, 0)
+        bmp.close?.()
+        return c
+      })
+      .catch(() => Promise.reject(new Error(`Failed to decode TIFF ${file.name}`)))
+  }
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
     const img = new Image()
@@ -124,8 +138,8 @@ function resizeCanvas(source, targetW, targetH) {
 }
 
 async function renderToBlob(img, targetW, quality, format) {
-  const srcW   = img.naturalWidth
-  const srcH   = img.naturalHeight
+  const srcW   = img.naturalWidth || img.width
+  const srcH   = img.naturalHeight || img.height
   const scale  = targetW > 0 && targetW < srcW ? targetW / srcW : 1
   const w      = Math.round(srcW * scale)
   const h      = Math.round(srcH * scale)
