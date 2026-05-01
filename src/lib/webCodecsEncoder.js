@@ -69,11 +69,47 @@ function loadVideo(file) {
     video.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none'
     document.body.appendChild(video)
 
-    video.onloadedmetadata = () => {
-      video.oncanplaythrough = () => resolve(video)
-      video.onerror = reject
+    let settled = false
+    const settleOk = () => {
+      if (settled) return
+      if (!(video.videoWidth > 0 && Number.isFinite(video.duration))) return
+      settled = true
+      clearTimeout(timeoutId)
+      resolve(video)
     }
-    video.onerror = reject
+    const settleErr = (detail) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeoutId)
+      reject(new Error(detail || 'Video failed to load'))
+    }
+
+    // Many .mov files never fire `canplaythrough` in Chrome; HAVE_CURRENT_DATA is enough to seek + draw.
+    const timeoutId = setTimeout(() => {
+      if (video.error) {
+        settleErr(video.error.message || 'Media decode error')
+        return
+      }
+      if (video.videoWidth > 0 && Number.isFinite(video.duration)) settleOk()
+      else settleErr('Timeout waiting for video (browser may not decode this format)')
+    }, 15000)
+
+    const considerReady = () => {
+      if (settled) return
+      if (
+        video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+        video.videoWidth > 0 &&
+        Number.isFinite(video.duration)
+      ) {
+        settleOk()
+      }
+    }
+
+    video.onloadedmetadata = considerReady
+    video.onloadeddata = considerReady
+    video.oncanplay = considerReady
+    video.oncanplaythrough = settleOk
+    video.onerror = () => settleErr('Media error')
     video.load()
   })
 }

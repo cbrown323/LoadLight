@@ -29,6 +29,20 @@ export function ingestExt(name) {
 }
 
 /**
+ * Full export via WebCodecs uses seek-capture on a detached `video` element. QuickTime
+ * (.mov) and AVI often stall (no canplaythrough / broken seeks) in Chrome while
+ * ffmpeg.wasm demuxes them reliably.
+ * @param {File} file
+ */
+export function preferFfmpegExportForFile(file) {
+  const ext = ingestExt(file.name)
+  if (ext === 'mov' || ext === 'avi') return true
+  const t = (file.type || '').toLowerCase()
+  if (t.includes('quicktime')) return true
+  return false
+}
+
+/**
  * True when the file should use the video pipeline (preview, export, timeline).
  * GIF is treated as video-like to match existing UI grouping.
  * @param {File} file

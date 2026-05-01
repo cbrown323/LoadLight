@@ -10,6 +10,7 @@
  */
 import { getFFmpeg } from './ffmpegLoader.js'
 import { supportsWebCodecs, encodeVideoWebCodecs } from './webCodecsEncoder.js'
+import { preferFfmpegExportForFile } from './mediaIngest.js'
 
 /**
  * Map quality slider (0-100) to CRF.
@@ -84,7 +85,8 @@ export async function encodeVideo(file, opts) {
 
   // ── WebCodecs fast-path (hardware-accelerated) ──────────
   // Available for MP4 and WebM in Chrome 94+, Edge 94+, Safari 16.4+
-  if (supportsWebCodecs() && fmt !== 'gif') {
+  // Skip for .mov/.avi: <video> often never becomes "ready" for seek-capture; ffmpeg is reliable.
+  if (supportsWebCodecs() && fmt !== 'gif' && !preferFfmpegExportForFile(file)) {
     onLog('🚀 Using WebCodecs (hardware-accelerated)…')
     try {
       const results = await encodeVideoWebCodecs(file, opts)
@@ -95,7 +97,11 @@ export async function encodeVideo(file, opts) {
       console.warn('WebCodecs failed, using WASM fallback:', err)
     }
   } else if (fmt !== 'gif') {
-    onLog('ℹ WebCodecs unavailable — using ffmpeg.wasm (slower)')
+    if (preferFfmpegExportForFile(file)) {
+      onLog('ℹ Using ffmpeg.wasm for this container (.mov / .avi / QuickTime MIME) — more reliable than browser decode.')
+    } else {
+      onLog('ℹ WebCodecs unavailable — using ffmpeg.wasm (slower)')
+    }
   }
 
   // ── ffmpeg.wasm fallback path ───────────────────────────
