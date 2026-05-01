@@ -57,7 +57,7 @@ Use this checklist to ground Task Capsules in real paths (search `src/` if unsur
 
 ## Known Issues
 
-1. **TIFF:** Decode depends on browser `createImageBitmap`; unsupported browsers queue the file but may show no preview until export path runs.
+1. **TIFF:** Native `createImageBitmap` often fails in Chrome; [`tiffDecode.js`](../src/lib/tiffDecode.js) falls back to ffmpeg (first frame → PNG). Very large or exotic TIFFs may still fail or load slowly on first ffmpeg init.
 2. **AVI / MOV:** Some codecs fail in-browser decode or FFmpeg — user sees thumbnail/preview errors or export failure; errors surface in UI log / preview panel.
 
 ## Media Processing Architecture (as implemented)

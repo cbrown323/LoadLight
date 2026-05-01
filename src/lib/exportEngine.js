@@ -129,6 +129,7 @@ export async function runExport(params) {
         outputs = await encodeImage(file, {
           format: resolvedFmt, quality, widths: safeWidths, resolutionPct,
           onProgress: (pct) => onFileProgress(id, pct),
+          onLog,
         })
       }
 

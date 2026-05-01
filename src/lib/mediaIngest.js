@@ -79,6 +79,7 @@ export function validateIngestFile(file) {
 /** HTML `accept` for hidden file inputs + drag-and-drop hint parity. */
 export const MEDIA_INPUT_ACCEPT = [
   'image/*',
+  'image/tiff',
   'video/*',
   '.gif',
   '.webp',

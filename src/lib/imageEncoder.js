@@ -11,6 +11,7 @@
  */
 
 import { isVideoLike, ingestExt } from './mediaIngest.js'
+import { decodeTiffToCanvas } from './tiffDecode.js'
 
 const MIME = {
   webp: 'image/webp',
@@ -27,19 +28,13 @@ export function resolveFormat(file, formatSetting) {
   return 'webp'
 }
 
-function loadImage(file) {
+function loadImage(file, onLog = () => {}) {
   const ext = ingestExt(file.name)
-  if (ext === 'tif' || ext === 'tiff') {
-    return createImageBitmap(file)
-      .then((bmp) => {
-        const c = document.createElement('canvas')
-        c.width = bmp.width
-        c.height = bmp.height
-        c.getContext('2d').drawImage(bmp, 0, 0)
-        bmp.close?.()
-        return c
-      })
-      .catch(() => Promise.reject(new Error(`Failed to decode TIFF ${file.name}`)))
+  const isTiff =
+    ext === 'tif' || ext === 'tiff' || (file.type || '').toLowerCase() === 'image/tiff'
+  if (isTiff) {
+    return decodeTiffToCanvas(file, onLog).catch((err) =>
+      Promise.reject(new Error(`Failed to decode TIFF ${file.name}: ${err.message}`)))
   }
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
@@ -194,6 +189,7 @@ export async function encodeImage(file, opts) {
     widths        = [],
     resolutionPct = 100,
     onProgress    = () => {},
+    onLog           = () => {},
   } = opts
 
   const fmt = resolveFormat(file, formatSetting)
@@ -201,11 +197,11 @@ export async function encodeImage(file, opts) {
     throw new Error('Use encodeVideo for video/GIF files')
   }
 
-  const img      = await loadImage(file)
+  const img      = await loadImage(file, onLog)
   const baseName = file.name.replace(/\.[^.]+$/, '')
   const ext      = fmt === 'jpeg' ? 'jpg' : fmt
 
-  const srcW    = img.naturalWidth
+  const srcW    = img.naturalWidth || img.width
   const scaledW = Math.round(srcW * (resolutionPct / 100))
 
   let targetWidths = widths.length > 0

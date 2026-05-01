@@ -5,6 +5,7 @@ import { encodeVideoPreview } from '../lib/videoPreviewEncoder.js'
 import { savePreset, loadPreset, listPresets, deletePreset } from '../lib/presets.js'
 import { getEncodingMode } from '../lib/ffmpegLoader.js'
 import { validateIngestFile, isVideoLike, ingestExt } from '../lib/mediaIngest.js'
+import { decodeTiffToCanvas } from '../lib/tiffDecode.js'
 
 // ── helpers ───────────────────────────────────────────────
 export function fmtBytes(b) {
@@ -114,15 +115,18 @@ const useStore = create((set, get) => ({
         id: Math.random().toString(36).slice(2),
       }
       set((s) => ({ files: [...s.files, fo] }))
-      generateThumb(fo, (updated) => {
-        set((s) => {
-          const files     = s.files.map((f) => (f.id === updated.id ? updated : f))
-          const activeIdx = s.activeIdx < 0 ? 0 : s.activeIdx
-          return { files, activeIdx }
-        })
-        // Kick off an initial after-preview for this file
-        get()._refreshPreview(updated)
-      })
+      generateThumb(
+        fo,
+        (updated) => {
+          set((s) => {
+            const files     = s.files.map((f) => (f.id === updated.id ? updated : f))
+            const activeIdx = s.activeIdx < 0 ? 0 : s.activeIdx
+            return { files, activeIdx }
+          })
+          get()._refreshPreview(updated)
+        },
+        (msg) => get().appendLog(msg),
+      )
     })
     if (reasons.length) {
       const msg = reasons.length === 1
@@ -404,20 +408,23 @@ const useStore = create((set, get) => ({
 }))
 
 // ── thumbnail generator ───────────────────────────────────
-function generateThumb(fo, cb) {
+/** @param {(msg: string) => void} [log] — e.g. TIFF ffmpeg fallback progress */
+function generateThumb(fo, cb, log = () => {}) {
   const { file } = fo
   const ext = ingestExt(file.name)
 
-  if (ext === 'tif' || ext === 'tiff') {
-    createImageBitmap(file)
-      .then((bmp) => {
-        const w = bmp.width
-        const h = bmp.height
+  const isTiff =
+    ext === 'tif' || ext === 'tiff' || (file.type || '').toLowerCase() === 'image/tiff'
+  if (isTiff) {
+    decodeTiffToCanvas(file, log)
+      .then((canvas) => {
+        const w = canvas.width
+        const h = canvas.height
         const thumb = document.createElement('canvas')
         const ts = Math.min(80 / w, 60 / h, 1)
         thumb.width = Math.max(1, Math.round(w * ts))
         thumb.height = Math.max(1, Math.round(h * ts))
-        thumb.getContext('2d').drawImage(bmp, 0, 0, thumb.width, thumb.height)
+        thumb.getContext('2d').drawImage(canvas, 0, 0, thumb.width, thumb.height)
         const thumbUrl = thumb.toDataURL('image/jpeg', 0.85)
         const maxPrev = 2048
         const ps = Math.min(1, maxPrev / w, maxPrev / h)
@@ -426,8 +433,7 @@ function generateThumb(fo, cb) {
         const prev = document.createElement('canvas')
         prev.width = pw
         prev.height = ph
-        prev.getContext('2d').drawImage(bmp, 0, 0, pw, ph)
-        bmp.close?.()
+        prev.getContext('2d').drawImage(canvas, 0, 0, pw, ph)
         prev.toBlob((blob) => {
           if (!blob) {
             cb({ ...fo, thumbUrl, previewUrl: null, width: w, height: h })
