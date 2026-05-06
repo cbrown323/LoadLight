@@ -18,6 +18,27 @@ import { preferFfmpegExportForFile } from './mediaIngest.js'
  */
 function qualityToCRF(q) { return Math.round(40 - (q / 100) * 22) }
 
+/** libx264 preset: slower at high quality → better compression per CRF (often smaller + cleaner). */
+function x264PresetForQuality(q) {
+  if (q >= 88) return 'medium'
+  if (q >= 75) return 'fast'
+  if (q >= 55) return 'veryfast'
+  if (q >= 35) return 'superfast'
+  return 'ultrafast'
+}
+
+/** libvpx VP8: ease off realtime/cpu-used when the slider asks for quality. */
+function vp8SpeedArgsForQuality(q) {
+  if (q >= 80) return ['-deadline', 'good', '-cpu-used', '2']
+  if (q >= 55) return ['-deadline', 'good', '-cpu-used', '5']
+  return ['-deadline', 'realtime', '-cpu-used', '8']
+}
+
+/** GIF palette size tied to quality (128–256). */
+function gifMaxColorsForQuality(q) {
+  return Math.max(128, Math.min(256, Math.round(128 + (q / 100) * 128)))
+}
+
 /** @param {{ ffprobe: Function, readFile: Function, deleteFile: Function }} ff */
 async function probeInputDurationSec(ff, inputName) {
   const outName = `_probe_${Date.now()}.txt`
@@ -56,8 +77,9 @@ function buildArgs(inputName, outputName, { quality, fps, width, bitrate, format
   if (format === 'gif') {
     const gifFps = fps > 0 ? fps : 15
     const scaleW = width > 0 ? width : 'iw'
+    const colors = gifMaxColorsForQuality(quality)
     args.push(
-      '-vf', `fps=${gifFps},scale=${scaleW}:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer`,
+      '-vf', `fps=${gifFps},scale=${scaleW}:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=${colors}[p];[s1][p]paletteuse=dither=bayer`,
       '-loop', '0', '-y', outputName,
     )
     return args
@@ -66,9 +88,8 @@ function buildArgs(inputName, outputName, { quality, fps, width, bitrate, format
   if (vf.length) args.push('-vf', vf.join(','))
 
   if (format === 'webm') {
-    // VP8 — realtime mode is the fastest possible config
     args.push('-c:v', 'libvpx')
-    args.push('-deadline', 'realtime', '-cpu-used', '8')
+    args.push(...vp8SpeedArgsForQuality(quality))
     if (bitrate > 0) {
       args.push('-b:v', `${bitrate}k`)
     } else {
@@ -77,10 +98,9 @@ function buildArgs(inputName, outputName, { quality, fps, width, bitrate, format
     if (!isGif) args.push('-c:a', 'libvorbis', '-q:a', '3')
     else        args.push('-an')
   } else {
-    // MP4 — ultrafast preset trades ~15% larger files for massive speed gains
     args.push('-c:v', 'libx264')
-    args.push('-preset', 'ultrafast')
-    args.push('-tune', 'fastdecode')
+    args.push('-preset', x264PresetForQuality(quality))
+    if (quality < 72) args.push('-tune', 'fastdecode')
     args.push('-crf', String(qualityToCRF(quality)))
     if (bitrate > 0) args.push('-b:v', `${bitrate}k`)
     args.push('-pix_fmt', 'yuv420p', '-movflags', '+faststart')
@@ -99,6 +119,7 @@ export async function encodeVideo(file, opts) {
     widths     = [],
     fps        = 0,
     bitrate    = 0,
+    labelWidthsInFilename = false,
     onProgress = () => {},
     onLog      = () => {},
   } = opts
@@ -108,8 +129,9 @@ export async function encodeVideo(file, opts) {
 
   // ── WebCodecs fast-path (hardware-accelerated) ──────────
   // Available for MP4 and WebM in Chrome 94+, Edge 94+, Safari 16.4+
-  // Skip for .mov/.avi: <video> often never becomes "ready" for seek-capture; ffmpeg is reliable.
-  if (supportsWebCodecs() && fmt !== 'gif' && !preferFfmpegExportForFile(file)) {
+  // GIF and non-container keys never use WebCodecs muxers here.
+  const webCodecsEligible = (fmt === 'mp4' || fmt === 'webm')
+  if (supportsWebCodecs() && webCodecsEligible && !preferFfmpegExportForFile(file)) {
     onLog('🚀 Using WebCodecs (hardware-accelerated)…')
     try {
       const results = await encodeVideoWebCodecs(file, opts)
@@ -228,7 +250,11 @@ export async function encodeVideo(file, opts) {
 
     const mimeType = fmt === 'webm' ? 'video/webm' : fmt === 'gif' ? 'image/gif' : 'video/mp4'
     const blob     = new Blob([data.slice(0)], { type: mimeType })
-    const filename = targetWidths.length > 1 && w > 0 ? `${baseName}-${w}.${fmt}` : `${baseName}.${fmt}`
+    const labelResponsive = labelWidthsInFilename && widths.length > 0
+    const filename =
+      labelResponsive || (targetWidths.length > 1 && w > 0)
+        ? `${baseName}-${w}.${fmt}`
+        : `${baseName}.${fmt}`
     results.push({ filename, blob, width: w })
     try { await ff.deleteFile(outputName) } catch (_) {}
     bump(10 + Math.round(((i + 1) / nOut) * 88))

@@ -1,7 +1,8 @@
 /**
  * presets.js
  * Save / load named presets to localStorage.
- * Each preset stores: format, quality, responsiveMode, breakpoints,
+ * Each preset stores: formatStill, formatMotion (legacy single `format` supported on load),
+ * quality, responsiveMode, breakpoints,
  * advResolution, advBitrate, advFps, generateSnippet, generatePoster, exportAs.
  */
 

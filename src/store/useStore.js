@@ -1,4 +1,9 @@
 import { create } from 'zustand'
+import {
+  BP_PRESETS,
+  BP_PRESETS_PORTRAIT,
+  isPortrait,
+} from '../lib/breakpointPresets.js'
 import { runExport as _runExport }      from '../lib/exportEngine.js'
 import { schedulePreview, cancelPreview } from '../lib/previewEncoder.js'
 import { encodeVideoPreview } from '../lib/videoPreviewEncoder.js'
@@ -25,54 +30,13 @@ export function estimateOutputSize(file, quality) {
   return Math.round(file.size * ratio)
 }
 
-export const BP_PRESETS = {
-  none:     [],
-  standard: [
-    { name: 'Desktop XL', w: 1920 },
-    { name: 'Desktop',    w: 1280 },
-    { name: 'Tablet',     w: 768  },
-    { name: 'Mobile',     w: 480  },
-  ],
-  mobile: [
-    { name: 'Mobile',  w: 360  },
-    { name: 'Tablet',  w: 768  },
-    { name: 'Desktop', w: 1280 },
-  ],
-  custom: [
-    { name: 'Custom 1', w: 1440 },
-    { name: 'Custom 2', w: 720  },
-  ],
-}
-
-// Portrait equivalents — use height as the constraining dimension
-export const BP_PRESETS_PORTRAIT = {
-  none:     [],
-  standard: [
-    { name: 'Full',    w: 1920 },
-    { name: 'Large',   w: 1280 },
-    { name: 'Medium',  w: 900  },
-    { name: 'Small',   w: 600  },
-  ],
-  mobile: [
-    { name: 'Small',   w: 480  },
-    { name: 'Medium',  w: 900  },
-    { name: 'Large',   w: 1280 },
-  ],
-  custom: [
-    { name: 'Custom 1', w: 1080 },
-    { name: 'Custom 2', w: 720  },
-  ],
-}
-
-export function isPortrait(fo) {
-  return fo && fo.height > 0 && fo.width > 0 && fo.height > fo.width
-}
+export { BP_PRESETS, BP_PRESETS_PORTRAIT, isPortrait } from '../lib/breakpointPresets.js'
 
 export const QUALITY_PRESETS = {
-  web:        { quality: 72, format: 'auto' },
-  mobile:     { quality: 55, format: 'webp' },
-  hq:         { quality: 90, format: 'auto' },
-  aggressive: { quality: 30, format: 'avif' },
+  web:        { quality: 72, formatStill: 'auto', formatMotion: 'auto' },
+  mobile:     { quality: 55, formatStill: 'webp', formatMotion: 'auto' },
+  hq:         { quality: 90, formatStill: 'auto', formatMotion: 'auto' },
+  aggressive: { quality: 30, formatStill: 'avif', formatMotion: 'auto' },
 }
 
 export function qualityZone(q) {
@@ -155,8 +119,7 @@ const useStore = create((set, get) => ({
     const state = get()
     const fo    = state.files[i]
     if (!fo || state.responsiveMode === 'none' || state.responsiveMode === 'custom') return
-    const portrait  = fo.height > 0 && fo.width > 0 && fo.height > fo.width
-    const presetSrc = portrait ? BP_PRESETS_PORTRAIT : BP_PRESETS
+    const presetSrc = isPortrait(fo) ? BP_PRESETS_PORTRAIT : BP_PRESETS
     const newBPs    = (presetSrc[state.responsiveMode] || []).slice()
     set({ breakpoints: newBPs })
   },
@@ -178,7 +141,7 @@ const useStore = create((set, get) => ({
 
   _refreshPreview: (fo) => {
     if (!fo) return
-    const { format, quality, advResolution } = get()
+    const { formatStill, quality, advResolution } = get()
     const isVideo = isVideoLike(fo.file)
     if (isVideo) return   // no re-encoding for video preview
 
@@ -186,7 +149,7 @@ const useStore = create((set, get) => ({
 
     schedulePreview(
       fo.file,
-      { format, quality, advResolution },
+      { format: formatStill, quality, advResolution },
       ({ url, size }) => {
         // Revoke old after URL
         set((s) => {
@@ -217,7 +180,7 @@ const useStore = create((set, get) => ({
     try {
       const { url, size } = await encodeVideoPreview(
         fo.file,
-        { format: state.format, quality: state.quality, fps: state.advFps, startTime: state.previewStartTime },
+        { format: state.formatMotion, quality: state.quality, fps: state.advFps, startTime: state.previewStartTime },
         (pct) => set({ videoPreviewPct: pct }),
         (msg) => { set({ videoPreviewLog: msg }); get().appendLog(msg) },
       )
@@ -247,7 +210,8 @@ const useStore = create((set, get) => ({
   },
 
   // ── settings ────────────────────────────────────────────
-  format:          'auto',
+  formatStill:     'auto',
+  formatMotion:    'auto',
   quality:         82,
   smartFormat:     true,
   responsiveMode:  'standard',
@@ -265,8 +229,12 @@ const useStore = create((set, get) => ({
   advBitrate:      0,
   advFps:          0,
 
-  setFormat: (v) => {
-    set({ format: v })
+  setFormatStill: (v) => {
+    set({ formatStill: v })
+    get().triggerPreviewRefresh()
+  },
+  setFormatMotion: (v) => {
+    set({ formatMotion: v })
     get().triggerPreviewRefresh()
   },
   setQuality: (v) => {
@@ -288,7 +256,19 @@ const useStore = create((set, get) => ({
   setAdvFps:         (v) => set({ advFps: Number(v) }),
 
   setResponsiveMode: (mode) =>
-    set({ responsiveMode: mode, breakpoints: (BP_PRESETS[mode] || []).slice() }),
+    set((s) => {
+      let breakpoints = []
+      if (mode === 'none') {
+        breakpoints = []
+      } else if (mode === 'custom') {
+        breakpoints = (BP_PRESETS.custom || []).slice()
+      } else {
+        const fo = s.files[s.activeIdx]
+        const presetSrc = isPortrait(fo) ? BP_PRESETS_PORTRAIT : BP_PRESETS
+        breakpoints = (presetSrc[mode] || []).slice()
+      }
+      return { responsiveMode: mode, breakpoints }
+    }),
 
   addBreakpoint: (w, name = 'Custom') =>
     set((s) => ({ breakpoints: [...s.breakpoints, { name, w }].sort((a, b) => b.w - a.w) })),
@@ -298,7 +278,14 @@ const useStore = create((set, get) => ({
 
   applyPreset: (key) => {
     const p = QUALITY_PRESETS[key]
-    if (p) { set({ quality: p.quality, format: p.format }); get().triggerPreviewRefresh() }
+    if (p) {
+      set({
+        quality: p.quality,
+        formatStill: p.formatStill ?? 'auto',
+        formatMotion: p.formatMotion ?? 'auto',
+      })
+      get().triggerPreviewRefresh()
+    }
   },
 
   // ── named presets ────────────────────────────────────────
@@ -307,7 +294,7 @@ const useStore = create((set, get) => ({
   saveCurrentPreset: (name) => {
     const s = get()
     const ok = savePreset(name, {
-      format: s.format, quality: s.quality, namingPattern: s.namingPattern,
+      formatStill: s.formatStill, formatMotion: s.formatMotion, quality: s.quality, namingPattern: s.namingPattern,
       responsiveMode: s.responsiveMode, breakpoints: s.breakpoints,
       advResolution: s.advResolution, advBitrate: s.advBitrate, advFps: s.advFps,
       generateSnippet: s.generateSnippet, generatePoster: s.generatePoster,
@@ -320,8 +307,21 @@ const useStore = create((set, get) => ({
   loadNamedPreset: (name) => {
     const p = loadPreset(name)
     if (!p) return false
+    let formatStill = p.formatStill
+    let formatMotion = p.formatMotion
+    if (formatStill == null && formatMotion == null && p.format != null) {
+      const f = p.format
+      if (f === 'auto') {
+        formatStill = 'auto'; formatMotion = 'auto'
+      } else if (['mp4', 'webm', 'gif'].includes(f)) {
+        formatStill = 'auto'; formatMotion = f
+      } else {
+        formatStill = f; formatMotion = 'auto'
+      }
+    }
     set({
-      format:          p.format          ?? 'auto',
+      formatStill:     formatStill ?? 'auto',
+      formatMotion:    formatMotion ?? 'auto',
       quality:         p.quality         ?? 82,
       responsiveMode:  p.responsiveMode  ?? 'standard',
       breakpoints:     p.breakpoints     ?? BP_PRESETS.standard.slice(),
@@ -355,7 +355,7 @@ const useStore = create((set, get) => ({
     if (!state.files.length || state.exportRunning) return
 
     const {
-      files, format, quality, smartFormat, breakpoints, responsiveMode,
+      files, formatStill, formatMotion, quality, smartFormat, breakpoints, responsiveMode,
       generateSnippet, generateAiMax, generatePoster, exportAs, projectName,
       setFileStatus, setFileRealSizes, appendLog,
       advResolution, advBitrate, advFps,
@@ -364,8 +364,7 @@ const useStore = create((set, get) => ({
     set({ exportRunning: true, exportProgress: 0, exportLog: [] })
     files.forEach((f) => setFileStatus(f.id, 'pending'))
 
-    const useResponsive    = responsiveMode !== 'none'
-    const breakpointWidths = breakpoints.map((bp) => bp.w)
+    const useResponsive = responsiveMode !== 'none'
     const perFile          = {}
     files.forEach((f) => { perFile[f.id] = 0 })
 
@@ -376,7 +375,7 @@ const useStore = create((set, get) => ({
 
     try {
       await _runExport({
-        files, format, quality, smartFormat, breakpointWidths,
+        files, formatStill, formatMotion, quality, smartFormat, breakpoints, responsiveMode,
         useResponsive, resolutionPct: advResolution || 100,
         fps: advFps || 0, bitrate: advBitrate || 0,
         generateSnippet, generateAiMax, generatePoster, exportAs, projectName,

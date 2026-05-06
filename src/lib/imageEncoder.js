@@ -12,6 +12,7 @@
 
 import { isVideoLike, ingestExt } from './mediaIngest.js'
 import { decodeTiffToCanvas } from './tiffDecode.js'
+import { downscaleImageSourceToCanvas } from './canvasDownscale.js'
 
 const MIME = {
   webp: 'image/webp',
@@ -45,93 +46,6 @@ function loadImage(file, onLog = () => {}) {
   })
 }
 
-/**
- * Apply a mild unsharp mask to a canvas to recover sharpness lost during downscale.
- * Uses a 3×3 Laplacian sharpening kernel blended at `strength`.
- * Only applied when downscaling by more than 40%.
- */
-function sharpenCanvas(src, strength = 0.25) {
-  const w = src.width
-  const h = src.height
-  const ctx = src.getContext('2d')
-  const imageData = ctx.getImageData(0, 0, w, h)
-  const d  = imageData.data
-  const out = new Uint8ClampedArray(d.length)
-
-  // 3×3 unsharp kernel: center weighted, neighbours negative
-  const kernel = [
-     0, -1,  0,
-    -1,  5, -1,
-     0, -1,  0,
-  ]
-
-  for (let y = 1; y < h - 1; y++) {
-    for (let x = 1; x < w - 1; x++) {
-      const i = (y * w + x) * 4
-      for (let c = 0; c < 3; c++) {
-        let val = 0
-        for (let ky = -1; ky <= 1; ky++) {
-          for (let kx = -1; kx <= 1; kx++) {
-            const ni  = ((y + ky) * w + (x + kx)) * 4
-            val += d[ni + c] * kernel[(ky + 1) * 3 + (kx + 1)]
-          }
-        }
-        // Blend original with sharpened
-        out[i + c] = Math.round(d[i + c] * (1 - strength) + Math.min(255, Math.max(0, val)) * strength)
-      }
-      out[i + 3] = d[i + 3] // preserve alpha
-    }
-  }
-
-  // Copy border pixels unmodified
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      if (y === 0 || y === h - 1 || x === 0 || x === w - 1) {
-        const i = (y * w + x) * 4
-        out[i] = d[i]; out[i+1] = d[i+1]; out[i+2] = d[i+2]; out[i+3] = d[i+3]
-      }
-    }
-  }
-
-  ctx.putImageData(new ImageData(out, w, h), 0, 0)
-  return src
-}
-
-/**
- * Multi-step downscale with high-quality smoothing.
- * Halves repeatedly until within 2× of target, then final precise step.
- */
-function resizeCanvas(source, targetW, targetH) {
-  let curW = source.naturalWidth || source.width
-  let curH = source.naturalHeight || source.height
-  let cur  = source
-
-  while (curW * 0.5 > targetW || curH * 0.5 > targetH) {
-    const nextW = Math.max(Math.round(curW * 0.5), targetW)
-    const nextH = Math.max(Math.round(curH * 0.5), targetH)
-    const step  = document.createElement('canvas')
-    step.width  = nextW
-    step.height = nextH
-    const ctx = step.getContext('2d')
-    ctx.imageSmoothingEnabled = true
-    ctx.imageSmoothingQuality = 'high'
-    ctx.drawImage(cur, 0, 0, nextW, nextH)
-    cur  = step
-    curW = nextW
-    curH = nextH
-  }
-
-  // Final resize to exact target
-  const out = document.createElement('canvas')
-  out.width  = targetW
-  out.height = targetH
-  const ctx = out.getContext('2d')
-  ctx.imageSmoothingEnabled = true
-  ctx.imageSmoothingQuality = 'high'
-  ctx.drawImage(cur, 0, 0, targetW, targetH)
-  return out
-}
-
 async function renderToBlob(img, targetW, quality, format) {
   const srcW   = img.naturalWidth || img.width
   const srcH   = img.naturalHeight || img.height
@@ -139,23 +53,7 @@ async function renderToBlob(img, targetW, quality, format) {
   const w      = Math.round(srcW * scale)
   const h      = Math.round(srcH * scale)
 
-  let canvas
-  if (scale < 0.75) {
-    // Large reduction: use multi-step + sharpening
-    canvas = resizeCanvas(img, w, h)
-    // Sharpen more aggressively for very small outputs
-    const sharpenStrength = scale < 0.4 ? 0.35 : 0.22
-    sharpenCanvas(canvas, sharpenStrength)
-  } else {
-    // Small reduction: single pass is fine
-    canvas = document.createElement('canvas')
-    canvas.width  = w
-    canvas.height = h
-    const ctx = canvas.getContext('2d')
-    ctx.imageSmoothingEnabled = true
-    ctx.imageSmoothingQuality = 'high'
-    ctx.drawImage(img, 0, 0, w, h)
-  }
+  const canvas = downscaleImageSourceToCanvas(img, srcW, srcH, w, h)
 
   const mime = MIME[format] || 'image/webp'
 
@@ -188,6 +86,8 @@ export async function encodeImage(file, opts) {
     quality       = 90,
     widths        = [],
     resolutionPct = 100,
+    /** When true and `widths` is non-empty (responsive export), always use `name-{w}.ext`. */
+    labelWidthsInFilename = false,
     onProgress    = () => {},
     onLog           = () => {},
   } = opts
@@ -211,11 +111,12 @@ export async function encodeImage(file, opts) {
   if (!targetWidths.includes(scaledW)) targetWidths.unshift(scaledW)
   if (targetWidths.length === 0) targetWidths = [scaledW]
 
+  const labelResponsive = labelWidthsInFilename && widths.length > 0
   const results = []
   for (let i = 0; i < targetWidths.length; i++) {
     const w    = targetWidths[i]
     const blob = await renderToBlob(img, w, quality, fmt)
-    const filename = targetWidths.length > 1
+    const filename = labelResponsive || targetWidths.length > 1
       ? `${baseName}-${w}.${ext}`
       : `${baseName}.${ext}`
     results.push({ filename, blob, width: w })

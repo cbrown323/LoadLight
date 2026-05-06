@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import useStore, { fmtBytes, getExt, estimateOutputSize } from '../store/useStore'
 import { isVideoLike } from '../lib/mediaIngest.js'
+import { previewStillFormatExt } from '../lib/exportFormatRouting.js'
 import s from './CenterPanel.module.css'
 
 // ─── InfoChips ────────────────────────────────────────────
@@ -297,7 +298,7 @@ function ZoomStage({ resetKey, children }) {
 // ─── CenterPanel ──────────────────────────────────────────
 export default function CenterPanel() {
   const {
-    files, activeIdx, viewMode, format, quality,
+    files, activeIdx, viewMode, formatStill, formatMotion, smartFormat, quality,
     loopPlayback, setLoopPlayback,
     previewLoading,
     videoPreviewLoading, videoPreviewPct, videoPreviewLog, videoPreviewError,
@@ -362,7 +363,10 @@ export default function CenterPanel() {
     setScrubPct(pct); setCurrentT(pct / 100)
   }
 
-  const outFmt   = format === 'auto' ? (isVideo ? 'MP4' : 'WebP') : format.toUpperCase()
+  const fmtPick  = isVideo ? formatMotion : formatStill
+  const outFmt   = isVideo
+    ? (fmtPick === 'auto' ? 'MP4' : fmtPick.toUpperCase())
+    : (fo?.file ? previewStillFormatExt(fo.file, formatStill, smartFormat) : 'webp').toUpperCase()
   const outSize  = fo?.afterSize ?? (fo ? estimateOutputSize(fo.file, quality) : 0)
   const savings  = fo ? Math.round((1 - outSize / fo.file.size) * 100) : 0
   const afterUrl = fo?.afterUrl ?? fo?.previewUrl

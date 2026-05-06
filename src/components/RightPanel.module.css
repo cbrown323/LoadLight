@@ -36,6 +36,18 @@
 }
 .sectionAction:hover { color: var(--cyan); }
 
+.formatSegmentLabel {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 12px 0 6px;
+}
+.formatSegmentLabel:first-child {
+  margin-top: 0;
+}
+
 /* Format grid */
 .formatGrid {
   display: grid;

@@ -4,14 +4,16 @@
  * AI Max snippet (single file for all assets), AVIF fallback, upscale guard
  */
 import JSZip from 'jszip'
+import { getBreakpointsForFile } from './breakpointPresets.js'
 import { buildAiMaxSnippet } from './aiMaxGenerator.js'
-import { encodeImage, resolveFormat } from './imageEncoder.js'
+import { encodeImage } from './imageEncoder.js'
 import { encodeVideo } from './videoEncoder.js'
 import { resolveWithFallback } from './formatSupport.js'
 import { isVideoLike } from './mediaIngest.js'
+import { pickExportPipeline, resolveExportRawFormat } from './exportFormatRouting.js'
 
 // ── Combined HTML snippet for ALL files ───────────────────
-function buildCombinedSnippet(fileResults, format, breakpointWidths, useResponsive) {
+function buildCombinedSnippet(fileResults, useResponsive) {
   const lines = []
   fileResults.forEach(({ fo, resolvedFmt, safeWidths }) => {
     const isVideo = isVideoLike(fo.file)
@@ -22,9 +24,12 @@ function buildCombinedSnippet(fileResults, format, breakpointWidths, useResponsi
       lines.push('<video controls playsinline>')
       if (useResponsive && safeWidths.length > 0) {
         const sorted = [...safeWidths].sort((a, b) => a - b)
+        const largest = [...safeWidths].sort((a, b) => b - a)[0]
         sorted.forEach((w) => lines.push(`  <source src="${name}-${w}.${fmt}" media="(max-width: ${w}px)">`))
+        lines.push(`  <source src="${name}-${largest}.${fmt}">`)
+      } else {
+        lines.push(`  <source src="${name}.${fmt}">`)
       }
-      lines.push(`  <source src="${name}.${fmt}">`)
       lines.push('</video>')
     } else {
       if (useResponsive && safeWidths.length > 0) {
@@ -69,10 +74,12 @@ function downloadBlob(blob, filename) {
 export async function runExport(params) {
   const {
     files,
-    format,
+    formatStill,
+    formatMotion,
     quality,
     smartFormat      = true,
-    breakpointWidths = [],
+    breakpoints      = [],
+    responsiveMode   = 'none',
     useResponsive    = false,
     resolutionPct    = 100,
     fps              = 0,
@@ -89,8 +96,7 @@ export async function runExport(params) {
     onLog            = () => {},
   } = params
 
-  const zip        = new JSZip()
-  const widths     = useResponsive ? breakpointWidths : []
+  const zip         = new JSZip()
   const fileResults = []  // collect for combined snippet generation
 
   for (const fo of files) {
@@ -101,33 +107,35 @@ export async function runExport(params) {
       const isGif   = file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif'
       const isVideo = isVideoLike(file)
 
-      let rawFmt = resolveFormat(file, format)
-      if (smartFormat && format === 'auto') {
-        if (isGif || isVideo) rawFmt = 'mp4'
-        else if (file.type === 'image/png' && file.size < 200000) rawFmt = 'png'
-        else rawFmt = 'webp'
-      }
+      const rawFmt = resolveExportRawFormat(file, formatStill, formatMotion, smartFormat)
 
-      const resolvedFmt = await resolveWithFallback(rawFmt)
+      let resolvedFmt = await resolveWithFallback(rawFmt)
       if (resolvedFmt !== rawFmt)
         onLog(`⚠ ${rawFmt.toUpperCase()} not supported — using ${resolvedFmt.toUpperCase()}`)
 
-      const needsFFmpeg = isVideo || isGif || resolvedFmt === 'mp4' || resolvedFmt === 'webm' || resolvedFmt === 'gif'
+      const { resolvedFmt: safeFmt, useVideoPipeline } = pickExportPipeline(file, resolvedFmt, onLog)
       const srcW        = fo.width || 99999
+      const bpForFile   = getBreakpointsForFile(fo, responsiveMode, breakpoints)
+      const widths      = bpForFile.map((bp) => bp.w)
       const safeWidths  = widths.filter((w) => w <= srcW)
       const skipped     = widths.filter((w) => w > srcW)
-      if (skipped.length) onLog(`⚠ Skipping ${skipped.join(', ')}px (would upscale ${file.name})`)
+      if (skipped.length)
+        onLog(`⚠ ${file.name}: skipping ${skipped.join(', ')}px (would upscale)`)
+
+      const labelWidthsInFilename = useResponsive && safeWidths.length > 0
 
       let outputs
 
-      if (needsFFmpeg) {
+      if (useVideoPipeline) {
         outputs = await encodeVideo(file, {
-          format: resolvedFmt, quality, widths: safeWidths, fps, bitrate,
+          format: safeFmt, quality, widths: safeWidths, fps, bitrate,
+          labelWidthsInFilename,
           onProgress: (pct) => onFileProgress(id, pct), onLog,
         })
       } else {
         outputs = await encodeImage(file, {
-          format: resolvedFmt, quality, widths: safeWidths, resolutionPct,
+          format: safeFmt, quality, widths: safeWidths, resolutionPct,
+          labelWidthsInFilename,
           onProgress: (pct) => onFileProgress(id, pct),
           onLog,
         })
@@ -153,7 +161,7 @@ export async function runExport(params) {
       }
 
       // Track for combined snippets
-      fileResults.push({ fo, resolvedFmt, safeWidths })
+      fileResults.push({ fo, resolvedFmt: safeFmt, safeWidths })
 
       onFileDone({ id, realSizes })
     } catch (err) {
@@ -165,7 +173,7 @@ export async function runExport(params) {
   // ── Combined HTML snippet — ONE file for all assets ──────
   if (generateSnippet && fileResults.length > 0) {
     onLog('Building HTML snippet…')
-    const snippet = buildCombinedSnippet(fileResults, format, breakpointWidths, useResponsive)
+    const snippet = buildCombinedSnippet(fileResults, useResponsive)
     const snipBlob = new Blob([snippet], { type: 'text/html' })
     if (exportAs === 'individual') downloadBlob(snipBlob, 'loadlight-snippet.html')
     else zip.file('loadlight-snippet.html', snippet)
@@ -177,9 +185,11 @@ export async function runExport(params) {
     onLog('Building AI Max snippet…')
     try {
       const aiSnippet = await buildAiMaxSnippet(files, {
-        format,
-        breakpoints: breakpointWidths.map((w) => ({ w })),
-        responsiveMode: useResponsive ? 'standard' : 'none',
+        formatStill,
+        formatMotion,
+        smartFormat,
+        breakpoints,
+        responsiveMode: useResponsive ? responsiveMode : 'none',
         withPalette: true,
       })
       const aiBlob = new Blob([aiSnippet], { type: 'text/html' })

@@ -17,8 +17,11 @@ function OrientationTag({ fo }) {
   if (!fo.width || !fo.height) return null
   const portrait = fo.height > fo.width
   return (
-    <span className={`${s.orientTag} ${portrait ? s.orientPortrait : s.orientLandscape}`}>
-      {portrait ? '▯' : '▭'}
+    <span
+      className={`${s.orientTag} ${portrait ? s.orientPortrait : s.orientLandscape}`}
+      title={portrait ? 'Portrait' : 'Landscape'}
+    >
+      {portrait ? 'P' : 'L'}
     </span>
   )
 }

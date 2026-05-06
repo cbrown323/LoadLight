@@ -1,12 +1,16 @@
 import React, { useState, useEffect } from 'react'
 import useStore, { getExt, qualityZone, isPortrait } from '../store/useStore'
+import { getBreakpointsForFile } from '../lib/breakpointPresets.js'
 import { buildAiMaxSnippet } from '../lib/aiMaxGenerator.js'
 import { isVideoLike } from '../lib/mediaIngest.js'
+import { previewStillFormatExt } from '../lib/exportFormatRouting.js'
 import Toggle from './Toggle'
 import s from './RightPanel.module.css'
 
-const FORMATS     = ['Auto ✦', 'WebP', 'AVIF', 'JPG', 'PNG', 'MP4', 'WebM', 'GIF']
-const FORMAT_KEYS = ['auto', 'webp', 'avif', 'jpg', 'png', 'mp4', 'webm', 'gif']
+const STILL_LABELS = ['Auto ✦', 'WebP', 'AVIF', 'JPG', 'PNG']
+const STILL_KEYS   = ['auto', 'webp', 'avif', 'jpg', 'png']
+const MOTION_LABELS = ['Auto ✦', 'MP4', 'WebM', 'GIF']
+const MOTION_KEYS   = ['auto', 'mp4', 'webm', 'gif']
 
 function Section({ title, action, actionLabel, children }) {
   return (
@@ -20,30 +24,39 @@ function Section({ title, action, actionLabel, children }) {
   )
 }
 
-// Combined HTML snippet for ALL files
-function buildHtmlSnippet(files, format, breakpoints, responsiveMode) {
-  const useResponsive = responsiveMode !== 'none' && breakpoints.length > 0
+// Combined HTML snippet for ALL files (per-file breakpoints match exportEngine)
+function buildHtmlSnippet(files, formatStill, formatMotion, breakpoints, responsiveMode, smartFormat) {
   const lines = []
 
   files.forEach((fo) => {
     const isVideo = isVideoLike(fo.file)
     const name    = fo.file.name.replace(/\.[^.]+$/, '')
-    const fmt     = format === 'auto' ? (isVideo ? 'mp4' : 'webp') : format
+    const fmt     = isVideo
+      ? (formatMotion === 'auto' ? 'mp4' : formatMotion)
+      : previewStillFormatExt(fo.file, formatStill, smartFormat)
+    const srcW    = fo.width || 99999
+
+    const bpForFile =
+      responsiveMode !== 'none' ? getBreakpointsForFile(fo, responsiveMode, breakpoints) : []
+    const safeBps = bpForFile.filter((bp) => bp.w <= srcW).sort((a, b) => a.w - b.w)
+    const useFileResponsive = safeBps.length > 0
 
     if (isVideo) {
       lines.push(`<video controls playsinline>`)
-      if (useResponsive) {
-        const sorted = [...breakpoints].sort((a, b) => a.w - b.w)
-        sorted.forEach((bp) => lines.push(`  <source src="${name}-${bp.w}.${fmt}" media="(max-width: ${bp.w}px)">`))
+      if (useFileResponsive) {
+        const largest = [...safeBps].sort((a, b) => b.w - a.w)[0]
+        safeBps.forEach((bp) =>
+          lines.push(`  <source src="${name}-${bp.w}.${fmt}" media="(max-width: ${bp.w}px)">`))
+        lines.push(`  <source src="${name}-${largest.w}.${fmt}">`)
+      } else {
+        lines.push(`  <source src="${name}.${fmt}">`)
       }
-      lines.push(`  <source src="${name}.${fmt}">`)
       lines.push(`</video>`)
     } else {
-      if (useResponsive && breakpoints.length > 0) {
-        const sorted  = [...breakpoints].sort((a, b) => a.w - b.w)
-        const largest = [...breakpoints].sort((a, b) => b.w - a.w)[0]
+      if (useFileResponsive) {
+        const largest = [...safeBps].sort((a, b) => b.w - a.w)[0]
         lines.push(`<picture>`)
-        sorted.forEach((bp) => {
+        safeBps.forEach((bp) => {
           lines.push(`  <source srcset="${name}-${bp.w}.${fmt}" media="(max-width: ${bp.w}px)">`)
         })
         lines.push(`  <img src="${name}-${largest.w}.${fmt}" alt="" loading="lazy">`)
@@ -59,7 +72,7 @@ function buildHtmlSnippet(files, format, breakpoints, responsiveMode) {
 
 export default function RightPanel() {
   const {
-    format, setFormat,
+    formatStill, setFormatStill, formatMotion, setFormatMotion,
     quality, setQuality,
     smartFormat, setSmartFormat,
     advResolution, setAdvResolution,
@@ -81,21 +94,30 @@ export default function RightPanel() {
 
   const fo      = files[activeIdx]
   const srcW    = fo?.width || 0
-  const outExt  = format === 'auto' ? (fo && isVideoLike(fo.file) ? 'mp4' : 'webp') : format
+  const motion   = fo && isVideoLike(fo.file)
+  const fmtPick  = motion ? formatMotion : formatStill
+  const outExt   = motion
+    ? (fmtPick === 'auto' ? 'mp4' : fmtPick)
+    : (fo?.file ? previewStillFormatExt(fo.file, formatStill, smartFormat) : 'webp')
   const zone    = qualityZone(quality)
 
   // Rebuild AI Max preview whenever toggle turns on or files/settings change
   useEffect(() => {
     if (!generateAiMax || files.length === 0) { setAiMaxPreview(''); return }
     setAiMaxLoading(true)
-    buildAiMaxSnippet(files, { format, breakpoints, responsiveMode, withPalette: true })
+    buildAiMaxSnippet(files, { formatStill, formatMotion, smartFormat, breakpoints, responsiveMode, withPalette: true })
       .then((s) => { setAiMaxPreview(s); setAiMaxLoading(false) })
       .catch(() => setAiMaxLoading(false))
-  }, [generateAiMax, files, format, breakpoints, responsiveMode])
+  }, [generateAiMax, files, formatStill, formatMotion, smartFormat, breakpoints, responsiveMode])
 
   const htmlSnippet = generateSnippet && files.length > 0
-    ? buildHtmlSnippet(files, format, breakpoints, responsiveMode)
+    ? buildHtmlSnippet(files, formatStill, formatMotion, breakpoints, responsiveMode, smartFormat)
     : ''
+
+  const queueHasStill  = files.some((f) => !isVideoLike(f.file))
+  const queueHasMotion = files.some((f) => isVideoLike(f.file))
+  const showStillFmt   = files.length === 0 || queueHasStill
+  const showMotionFmt  = files.length === 0 || queueHasMotion
 
   function handleAddBreakpoint() {
     const w = window.prompt('Breakpoint width (px):', '1024')
@@ -109,13 +131,32 @@ export default function RightPanel() {
 
       {/* ── FORMAT ── */}
       <Section title="Output Format">
-        <div className={s.formatGrid}>
-          {FORMATS.map((label, i) => (
-            <button key={label}
-              className={`${s.fmtBtn} ${format === FORMAT_KEYS[i] ? s.selected : ''}`}
-              onClick={() => setFormat(FORMAT_KEYS[i])}>{label}</button>
-          ))}
-        </div>
+        {showStillFmt && (
+          <>
+            <div className={s.formatSegmentLabel}>Still images</div>
+            <div className={s.formatGrid}>
+              {STILL_LABELS.map((label, i) => (
+                <button key={label}
+                  type="button"
+                  className={`${s.fmtBtn} ${formatStill === STILL_KEYS[i] ? s.selected : ''}`}
+                  onClick={() => setFormatStill(STILL_KEYS[i])}>{label}</button>
+              ))}
+            </div>
+          </>
+        )}
+        {showMotionFmt && (
+          <>
+            <div className={s.formatSegmentLabel}>Video / GIF</div>
+            <div className={s.formatGrid}>
+              {MOTION_LABELS.map((label, i) => (
+                <button key={label}
+                  type="button"
+                  className={`${s.fmtBtn} ${formatMotion === MOTION_KEYS[i] ? s.selected : ''}`}
+                  onClick={() => setFormatMotion(MOTION_KEYS[i])}>{label}</button>
+              ))}
+            </div>
+          </>
+        )}
         <div className={s.row}>
           <span className={s.toggleLabel}>Smart Format Selection</span>
           <Toggle on={smartFormat} onChange={setSmartFormat} />

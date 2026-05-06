@@ -17,7 +17,7 @@
  *
  * Other features:
  *  - Source FPS detection via requestVideoFrameCallback (brief probe only)
- *  - hardwareAcceleration: 'prefer-hardware', latencyMode: 'realtime'
+ *  - hardwareAcceleration: 'prefer-hardware'; latencyMode quality vs realtime by slider (with fallback)
  *  - Direct VideoFrame from <video> when no scaling needed
  *  - Sequential audio (after video) to avoid memory pressure
  *  - Encoder back-pressure via encodeQueueSize polling
@@ -25,6 +25,7 @@
 
 import { Muxer as Mp4Muxer, ArrayBufferTarget as Mp4Target } from 'mp4-muxer'
 import { Muxer as WebmMuxer, ArrayBufferTarget as WebmTarget } from 'webm-muxer'
+import { createVideoFrameScaler } from './canvasDownscale.js'
 
 // ── Feature detection ──────────────────────────────────────
 
@@ -47,11 +48,45 @@ function hasRVFC() {
     'requestVideoFrameCallback' in HTMLVideoElement.prototype
 }
 
-/** Map quality 0-100 → bitrate (bps) for a given width */
-function qualityToBitrate(quality, width, fps) {
-  const base = width * width * (fps || 30) * 0.07
+/**
+ * Map quality 0-100 → bitrate (bps) from pixel area (fair for portrait/tall video).
+ * Uses the same strength as the historical width²×0.07 heuristic at 16:9.
+ * Boosts / floors outputs whose short side is under 1280px so small breakpoints keep more bits per pixel.
+ */
+function qualityToBitrate(quality, width, height, fps) {
+  const w = Math.max(1, width | 0)
+  const h = Math.max(1, height | 0)
+  const pixels = w * h
+  const f = fps || 30
+  const legacy16by9K = 0.07 * (16 / 9)
   const factor = 0.3 + (quality / 100) * 1.7
-  return Math.round(base * factor)
+  let bps = Math.round(pixels * f * legacy16by9K * factor)
+
+  const shortSide = Math.min(w, h)
+  if (shortSide < 1280) {
+    const t = (1280 - shortSide) / 1280
+    bps = Math.round(bps * (1 + t * 0.28))
+    const minBps = Math.round(pixels * f * legacy16by9K * 0.42)
+    bps = Math.max(bps, minBps)
+  }
+
+  return bps
+}
+
+/** Try latencyMode=quality at high slider values; fall back if the browser rejects it. */
+function configureVideoEncoder(encoder, baseConfig, quality) {
+  const preferQuality = quality >= 74
+  const modes = preferQuality ? ['quality', 'realtime'] : ['realtime']
+  let lastErr = null
+  for (const latencyMode of modes) {
+    try {
+      encoder.configure({ ...baseConfig, latencyMode })
+      return
+    } catch (err) {
+      lastErr = err
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
 }
 
 // ── Video loading ──────────────────────────────────────────
@@ -232,11 +267,13 @@ async function captureFrames(video, encoder, muxer, opts) {
   const canvas = document.createElement('canvas')
   canvas.width = finalWidth
   canvas.height = finalHeight
-  const ctx = canvas.getContext('2d', { willReadFrequently: false })
   const frameDurationUs = Math.round(1_000_000 / outFps)
 
+  const srcW = video.videoWidth
+  const srcH = video.videoHeight
+  const scaler = createVideoFrameScaler(srcW, srcH, finalWidth, finalHeight)
+
   let encodedCount = 0
-  let lastMediaTime = -1
 
   for (let i = 0; i < totalFrames; i++) {
     const targetTime = startTime + (i / outFps)
@@ -259,8 +296,7 @@ async function captureFrames(video, encoder, muxer, opts) {
       attempts++
     }
 
-    // Snapshot the verified frame
-    ctx.drawImage(video, 0, 0, finalWidth, finalHeight)
+    scaler.draw(video, canvas)
 
     const timestampUs = Math.round((i / outFps) * 1_000_000)
 
@@ -404,6 +440,7 @@ export async function encodeVideoWebCodecs(file, opts) {
     widths = [],
     fps: targetFps = 0,
     bitrate: userBitrate = 0,
+    labelWidthsInFilename = false,
     onProgress = () => {},
     onLog = () => {},
   } = opts
@@ -413,6 +450,7 @@ export async function encodeVideoWebCodecs(file, opts) {
   const baseName = file.name.replace(/\.[^.]+$/, '')
 
   if (fmt === 'gif') return null
+  if (fmt !== 'mp4' && fmt !== 'webm') return null
 
   onProgress(2)
   onLog('Loading video for WebCodecs encode…')
@@ -448,7 +486,7 @@ export async function encodeVideoWebCodecs(file, opts) {
     const videoCodec = isWebm ? 'vp8' : 'avc1.4d0028'
     const videoBitrate = userBitrate > 0
       ? userBitrate * 1000
-      : qualityToBitrate(quality, finalWidth, outFps)
+      : qualityToBitrate(quality, finalWidth, finalHeight, outFps)
 
     const totalFrames = Math.ceil(duration * outFps)
 
@@ -466,17 +504,19 @@ export async function encodeVideoWebCodecs(file, opts) {
         error: (err) => console.error('VideoEncoder error:', err),
       })
 
-      encoder.configure({
-        codec: videoCodec,
-        width: finalWidth,
-        height: finalHeight,
-        bitrate: videoBitrate,
-        framerate: outFps,
-        latencyMode: 'realtime',
-        // VP8 hardware encoding isn't supported on most GPUs. Let the browser pick software.
-        hardwareAcceleration: isWebm ? 'no-preference' : 'prefer-hardware',
-        ...(isWebm ? {} : { avc: { format: 'avc' } }),
-      })
+      configureVideoEncoder(
+        encoder,
+        {
+          codec: videoCodec,
+          width: finalWidth,
+          height: finalHeight,
+          bitrate: videoBitrate,
+          framerate: outFps,
+          hardwareAcceleration: isWebm ? 'no-preference' : 'prefer-hardware',
+          ...(isWebm ? {} : { avc: { format: 'avc' } }),
+        },
+        quality,
+      )
 
       // Capture all frames via sequential seeking
       const captured = await captureFrames(video, encoder, muxer, {
@@ -508,9 +548,11 @@ export async function encodeVideoWebCodecs(file, opts) {
       const elapsed = ((performance.now() - t0) / 1000).toFixed(1)
       onLog(`✓ ${finalWidth}px done — ${(blob.size / 1024 / 1024).toFixed(1)} MB in ${elapsed}s`)
 
-      const filename = targetWidths.length > 1 && w > 0
-        ? `${baseName}-${w}.${fmt}`
-        : `${baseName}.${fmt}`
+      const labelResponsive = labelWidthsInFilename && widths.length > 0
+      const filename =
+        labelResponsive || (targetWidths.length > 1 && w > 0)
+          ? `${baseName}-${w}.${fmt}`
+          : `${baseName}.${fmt}`
       results.push({ filename, blob, width: w })
     } catch (err) {
       onLog(`✗ Failed ${finalWidth}px: ${err.message}`)
@@ -521,6 +563,16 @@ export async function encodeVideoWebCodecs(file, opts) {
   }
 
   cleanupVideo(video)
+
+  if (results.length < targetWidths.length) {
+    const got = new Set(results.map((r) => r.width))
+    const missing = targetWidths.filter((tw) => !got.has(tw))
+    const msg =
+      `WebCodecs export incomplete: missing ${missing.length} output(s) for width(s): ${missing.join(', ')}px`
+    console.error(msg)
+    throw new Error(msg)
+  }
+
   onProgress(100)
   return results.length > 0 ? results : null
 }
@@ -548,7 +600,7 @@ export async function encodePreviewWebCodecs(file, opts) {
   const finalWidth = width % 2 === 0 ? width : width - 1
   const finalHeight = height % 2 === 0 ? height : height - 1
 
-  const bitrate = qualityToBitrate(quality, finalWidth, outFps) * 0.7
+  const bitrate = Math.round(qualityToBitrate(quality, finalWidth, finalHeight, outFps) * 0.7)
   const { muxer, target } = createMuxer('mp4', finalWidth, finalHeight, outFps, false)
 
   const encoder = new VideoEncoder({
@@ -556,16 +608,19 @@ export async function encodePreviewWebCodecs(file, opts) {
     error: (err) => console.error('Preview VideoEncoder error:', err),
   })
 
-  encoder.configure({
-    codec: 'avc1.4d0028',
-    width: finalWidth,
-    height: finalHeight,
-    bitrate,
-    framerate: outFps,
-    latencyMode: 'realtime',
-    hardwareAcceleration: 'prefer-hardware',
-    avc: { format: 'avc' },
-  })
+  configureVideoEncoder(
+    encoder,
+    {
+      codec: 'avc1.4d0028',
+      width: finalWidth,
+      height: finalHeight,
+      bitrate,
+      framerate: outFps,
+      hardwareAcceleration: 'prefer-hardware',
+      avc: { format: 'avc' },
+    },
+    quality,
+  )
 
   await captureFrames(video, encoder, muxer, {
     totalFrames, outFps, duration,

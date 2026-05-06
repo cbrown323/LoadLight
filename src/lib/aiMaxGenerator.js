@@ -1,4 +1,7 @@
+import { getBreakpointsForFile } from './breakpointPresets.js'
 import { isVideoLike } from './mediaIngest.js'
+import { resolveExportRawFormat, pickExportPipeline } from './exportFormatRouting.js'
+import { resolveWithFallback } from './formatSupport.js'
 
 /**
  * aiMaxGenerator.js v2.1
@@ -60,28 +63,34 @@ export function extractPalette(imageUrl) {
  * Build AI Max v2.1 snippet for all files.
  * Returns the full <script> block as a string.
  */
-export async function buildAiMaxSnippet(files, { format, breakpoints = [], responsiveMode = 'none' }) {
-  const useResponsive = responsiveMode !== 'none' && breakpoints.length > 0
+export async function buildAiMaxSnippet(files, {
+  formatStill = 'auto',
+  formatMotion = 'auto',
+  smartFormat = true,
+  breakpoints = [],
+  responsiveMode = 'none',
+}) {
+  const useResponsive = responsiveMode !== 'none'
   const assets = []
   const groups = {}
 
   for (let i = 0; i < files.length; i++) {
     const fo      = files[i]
     const isVideo = isVideoLike(fo.file)
-    const isGif   = fo.file.name.toLowerCase().endsWith('.gif')
-    const type    = isVideo ? 'vid' : 'img'
-    const name    = fo.file.name.replace(/\.[^.]+$/, '')
+    const type = isVideo ? 'vid' : 'img'
+    const name = fo.file.name.replace(/\.[^.]+$/, '')
 
-    // Output format
-    let fmt = format === 'auto' ? (isVideo ? 'mp4' : 'webp') : format
-    if (isGif && format === 'auto') fmt = 'mp4'
+    const rawFmt = resolveExportRawFormat(fo.file, formatStill, formatMotion, smartFormat)
+    const afterFallback = await resolveWithFallback(rawFmt)
+    const { resolvedFmt: fmt } = pickExportPipeline(fo.file, afterFallback, () => {})
 
     // Responsive sizes — nested [[w,h], ...] skipping upscales
     let sizes = null
     if (!isVideo) {
       const srcW = fo.width || 0
-      const bps  = useResponsive
-        ? breakpoints.filter((bp) => srcW === 0 || bp.w <= srcW).sort((a, b) => b.w - a.w)
+      const bpForFile = useResponsive ? getBreakpointsForFile(fo, responsiveMode, breakpoints) : []
+      const bps       = useResponsive
+        ? bpForFile.filter((bp) => srcW === 0 || bp.w <= srcW).sort((a, b) => b.w - a.w)
         : []
       if (bps.length > 0) {
         sizes = bps.map((bp) => {
