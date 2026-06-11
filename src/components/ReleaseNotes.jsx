@@ -2,18 +2,28 @@ import React, { useState, useRef, useEffect } from 'react'
 import s from './ReleaseNotes.module.css'
 
 /** Latest shipped version — TopBar reads this so it stays aligned with release notes. */
-export const LATEST_RELEASE_VERSION = 'v1.5'
+export const LATEST_RELEASE_VERSION = 'v1.5.1'
 
 const NOTES = [
   {
     version: LATEST_RELEASE_VERSION,
+    date: 'Jun 2026',
+    items: [
+      'Canvas preview fit-to-canvas at 100% — media fills the preview pane with contain scaling (no crop)',
+      'Zoom above 100% up to native 1:1 pixels for pixel-accuracy checks; live zoom % label on the toolbar',
+      'Working +/−/Fit controls — Fit resets to full contain; pan drag when zoomed content overflows',
+      'Wheel zoom with cursor anchoring; preview no longer capped at 300px height',
+    ],
+  },
+  {
+    version: 'v1.5',
     date: 'May 2026',
     items: [
       'Separate output formats for still images vs video / GIF — pick WebP/AVIF/JPEG/PNG for photos and MP4/WebM/GIF for motion without one grid forcing both',
       'Portrait-aware responsive breakpoints — preset tiers adapt when the active asset is taller than wide',
       'MOV / AVI exports routed through ffmpeg.wasm when browser decoding is unreliable; WebCodecs path hardened for more sources',
       'TIFF imports decoded via ffmpeg when the browser cannot decode them directly',
-      'Preview zoom / pan on the canvas, timeline scrubber sync fixes, and clearer media ingestion validation',
+      'Initial preview zoom / pan on the canvas, timeline scrubber sync fixes, and clearer media ingestion validation',
       'Saved presets store still + motion format; older single-format presets load correctly',
     ],
   },

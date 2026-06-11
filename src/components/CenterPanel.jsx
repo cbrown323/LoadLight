@@ -1,7 +1,20 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react'
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import useStore, { fmtBytes, getExt, estimateOutputSize } from '../store/useStore'
 import { isVideoLike } from '../lib/mediaIngest.js'
 import { previewStillFormatExt } from '../lib/exportFormatRouting.js'
+import {
+  ZOOM_STEP,
+  WHEEL_ZOOM_FACTOR,
+  computeFitScale,
+  computeTotalScale,
+  computePanBounds,
+  clampPan,
+  panEnabled,
+  effectiveZoomMax,
+  stepUserZoom,
+  formatZoomLabel,
+  panForZoomAtCursor,
+} from '../lib/canvasViewport.js'
 import s from './CenterPanel.module.css'
 
 // ─── InfoChips ────────────────────────────────────────────
@@ -26,7 +39,7 @@ function InfoChips({ res, fmt, size, variant }) {
  * `ownsTimeline={false}`: this `<video>` follows scrub/ play state but does not push duration or
  * currentTime into the parent (split view: short preview vs full-length original).
  */
-function VideoPreview({ src, loop, playing, scrubPct, onDuration, onTimeUpdate, isAfter, ownsTimeline = true }) {
+function VideoPreview({ src, loop, playing, scrubPct, onDuration, onTimeUpdate, onNaturalSize, isAfter, ownsTimeline = true }) {
   const vidRef    = useRef(null)
   const prevSrc   = useRef(null)
   const isSeeking = useRef(false)
@@ -67,11 +80,17 @@ function VideoPreview({ src, loop, playing, scrubPct, onDuration, onTimeUpdate, 
   return (
     <video
       ref={vidRef}
+      className={`${s.zoomMedia} ${isAfter ? s.zoomMediaAfter : s.zoomMediaBefore}`}
       muted
       playsInline
       onLoadedMetadata={() => {
-        if (!ownsTimeline || !vidRef.current) return
-        onDuration(vidRef.current.duration)
+        const vid = vidRef.current
+        if (!vid) return
+        if (vid.videoWidth > 0 && vid.videoHeight > 0) {
+          onNaturalSize?.(vid.videoWidth, vid.videoHeight)
+        }
+        if (!ownsTimeline) return
+        onDuration(vid.duration)
       }}
       onTimeUpdate={() => {
         if (!ownsTimeline) return
@@ -79,17 +98,12 @@ function VideoPreview({ src, loop, playing, scrubPct, onDuration, onTimeUpdate, 
         const vid = vidRef.current
         if (vid && vid.duration && isFinite(vid.duration)) onTimeUpdate(vid.currentTime / vid.duration)
       }}
-      style={{
-        maxWidth: '100%', maxHeight: 300, borderRadius: 6, display: 'block', background: '#000',
-        border: isAfter ? '1px solid var(--border-cyan)' : '1px solid var(--border)',
-        filter: isAfter ? 'saturate(1.08) contrast(1.03)' : 'none',
-      }}
     />
   )
 }
 
 // ─── StaticPreview ────────────────────────────────────────
-function StaticPreview({ src, isAfter, loading }) {
+function StaticPreview({ src, isAfter, loading, onNaturalSize }) {
   if (!src) {
     return (
       <div className={s.noPreview}>
@@ -99,18 +113,21 @@ function StaticPreview({ src, isAfter, loading }) {
     )
   }
   return (
-    <div style={{ position: 'relative', display: 'inline-block' }}>
+    <div className={s.zoomMediaFrame}>
       <img
-        src={src} alt=""
-        style={{
-          maxWidth: '100%', maxHeight: 300, borderRadius: 6, display: 'block',
-          border: isAfter ? '1px solid var(--border-cyan)' : '1px solid var(--border)',
-          opacity: loading && isAfter ? 0.5 : 1,
-          transition: 'opacity 0.2s',
+        src={src}
+        alt=""
+        className={`${s.zoomMedia} ${isAfter ? s.zoomMediaAfter : s.zoomMediaBefore}`}
+        style={{ opacity: loading && isAfter ? 0.5 : 1 }}
+        onLoad={(e) => {
+          const img = e.currentTarget
+          if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+            onNaturalSize?.(img.naturalWidth, img.naturalHeight)
+          }
         }}
       />
       {loading && isAfter && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className={s.zoomMediaSpinner}>
           <div className={s.spinner} />
         </div>
       )}
@@ -201,96 +218,181 @@ function VideoAfterPlaceholder({ loading, pct, log, error, onEncode, startTime, 
   )
 }
 
-/** Wheel zoom + drag pan on the preview surface; resets when `resetKey` changes. */
-function ZoomStage({ resetKey, children }) {
+/** Fit-based zoom + pan; 100% = contain in viewport. Resets when `resetKey` changes. */
+function ZoomStage({ resetKey, mediaWidth = 0, mediaHeight = 0, zoomable = true, children }) {
   const wrapRef = useRef(null)
-  const [scale, setScale] = useState(1)
-  const [tx, setTx] = useState(0)
-  const [ty, setTy] = useState(0)
-  const drag = useRef({ on: false, sx: 0, sy: 0, tx0: 0, ty0: 0 })
+  const [viewport, setViewport] = useState({ width: 0, height: 0 })
+  const [measured, setMeasured] = useState({ width: 0, height: 0 })
+  const [view, setView] = useState({ userZoom: 1, panX: 0, panY: 0 })
+  const drag = useRef({ on: false, sx: 0, sy: 0, panX0: 0, panY0: 0 })
+
+  const mediaW = mediaWidth || measured.width
+  const mediaH = mediaHeight || measured.height
+  const hasMedia = zoomable && mediaW > 0 && mediaH > 0
+
+  const metrics = useMemo(() => {
+    const { width: vpW, height: vpH } = viewport
+    if (!hasMedia) {
+      return { fitScale: 1, maxZoom: 1, totalScale: 1, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } }
+    }
+    const fitScale = computeFitScale(vpW, vpH, mediaW, mediaH)
+    const maxZoom = effectiveZoomMax(vpW, vpH, mediaW, mediaH)
+    const totalScale = computeTotalScale(fitScale, view.userZoom)
+    const bounds = computePanBounds(vpW, vpH, mediaW, mediaH, totalScale)
+    return { fitScale, maxZoom, totalScale, bounds }
+  }, [hasMedia, viewport, mediaW, mediaH, view.userZoom])
 
   useEffect(() => {
-    setScale(1)
-    setTx(0)
-    setTy(0)
+    setMeasured({ width: 0, height: 0 })
+    setView({ userZoom: 1, panX: 0, panY: 0 })
   }, [resetKey])
 
-  const clampPan = useCallback((nextScale, nx, ny) => {
+  useEffect(() => {
     const el = wrapRef.current
-    if (!el || nextScale <= 1) return { x: 0, y: 0 }
-    const maxX = ((nextScale - 1) * el.clientWidth) / 2
-    const maxY = ((nextScale - 1) * el.clientHeight) / 2
-    return {
-      x: Math.max(-maxX, Math.min(maxX, nx)),
-      y: Math.max(-maxY, Math.min(maxY, ny)),
-    }
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (!entry) return
+      const { width, height } = entry.contentRect
+      setViewport({ width, height })
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
   }, [])
 
-  const onWheel = (e) => {
-    e.preventDefault()
-    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12
-    setScale((prev) => {
-      const next = Math.min(4, Math.max(1, prev * factor))
-      if (next <= 1) {
-        setTx(0)
-        setTy(0)
-      } else {
-        const p = clampPan(next, tx, ty)
-        setTx(p.x)
-        setTy(p.y)
+  useEffect(() => {
+    if (!hasMedia) return
+    const { width: vpW, height: vpH } = viewport
+    setView((v) => {
+      if (v.userZoom <= 1) {
+        return v.panX === 0 && v.panY === 0 ? v : { ...v, panX: 0, panY: 0 }
       }
-      return next
+      const fitScale = computeFitScale(vpW, vpH, mediaW, mediaH)
+      const totalScale = computeTotalScale(fitScale, v.userZoom)
+      const bounds = computePanBounds(vpW, vpH, mediaW, mediaH, totalScale)
+      const p = clampPan(v.panX, v.panY, bounds)
+      return p.x === v.panX && p.y === v.panY ? v : { ...v, panX: p.x, panY: p.y }
     })
+  }, [hasMedia, viewport.width, viewport.height, mediaW, mediaH, view.userZoom])
+
+  const applyZoom = useCallback((factor, cursorX = 0, cursorY = 0) => {
+    if (!hasMedia) return
+    const { width: vpW, height: vpH } = viewport
+    setView((prev) => {
+      const fitScale = computeFitScale(vpW, vpH, mediaW, mediaH)
+      const maxZoom = effectiveZoomMax(vpW, vpH, mediaW, mediaH)
+      const oldTotal = computeTotalScale(fitScale, prev.userZoom)
+      const nextZoom = stepUserZoom(prev.userZoom, factor, maxZoom)
+      if (nextZoom <= 1) {
+        return { userZoom: nextZoom, panX: 0, panY: 0 }
+      }
+      const newTotal = computeTotalScale(fitScale, nextZoom)
+      const moved = panForZoomAtCursor(prev.panX, prev.panY, oldTotal, newTotal, cursorX, cursorY)
+      const p = clampPan(moved.x, moved.y, computePanBounds(vpW, vpH, mediaW, mediaH, newTotal))
+      return { userZoom: nextZoom, panX: p.x, panY: p.y }
+    })
+  }, [hasMedia, viewport, mediaW, mediaH])
+
+  const onWheel = (e) => {
+    if (!hasMedia) return
+    e.preventDefault()
+    const rect = wrapRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const cursorX = e.clientX - rect.left - rect.width / 2
+    const cursorY = e.clientY - rect.top - rect.height / 2
+    const factor = e.deltaY < 0 ? WHEEL_ZOOM_FACTOR : 1 / WHEEL_ZOOM_FACTOR
+    applyZoom(factor, cursorX, cursorY)
   }
 
   const onPointerDown = (e) => {
-    if (scale <= 1) return
+    if (!hasMedia || !panEnabled(metrics.bounds)) return
+    if (e.button !== 0) return
     e.currentTarget.setPointerCapture(e.pointerId)
-    drag.current = { on: true, sx: e.clientX, sy: e.clientY, tx0: tx, ty0: ty }
+    drag.current = { on: true, sx: e.clientX, sy: e.clientY, panX0: view.panX, panY0: view.panY }
   }
+
   const onPointerMove = (e) => {
     if (!drag.current.on) return
     const dx = e.clientX - drag.current.sx
     const dy = e.clientY - drag.current.sy
-    const p = clampPan(scale, drag.current.tx0 + dx, drag.current.ty0 + dy)
-    setTx(p.x)
-    setTy(p.y)
+    const p = clampPan(drag.current.panX0 + dx, drag.current.panY0 + dy, metrics.bounds)
+    setView((v) => ({ ...v, panX: p.x, panY: p.y }))
   }
+
   const endDrag = (e) => {
     try { e.currentTarget.releasePointerCapture(e.pointerId) } catch (_) {}
     drag.current.on = false
   }
 
+  const fitToCanvas = () => setView({ userZoom: 1, panX: 0, panY: 0 })
+
+  const onNaturalSize = useCallback((w, h) => {
+    setMeasured({ width: w, height: h })
+  }, [])
+
+  const child = React.Children.only(children)
+  const previewChild = React.isValidElement(child)
+    ? React.cloneElement(child, { onNaturalSize })
+    : child
+
+  const canPan = hasMedia && panEnabled(metrics.bounds)
+  const viewportClass = `${s.zoomViewport} ${canPan ? s.zoomViewportPan : s.zoomViewportIdle}`
+
   return (
-    <div
-      ref={wrapRef}
-      className={s.zoomViewport}
-      onWheel={onWheel}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
-    >
+    <div ref={wrapRef} className={viewportClass}>
       <div
-        className={s.zoomInner}
-        style={{
-          transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
-        }}
+        className={s.zoomSurface}
+        onWheel={onWheel}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
       >
-        {children}
+        <div
+          className={s.zoomInner}
+          style={{
+            width: hasMedia ? mediaW : undefined,
+            height: hasMedia ? mediaH : undefined,
+            transform: hasMedia
+              ? `translate(${view.panX}px, ${view.panY}px) scale(${metrics.totalScale})`
+              : undefined,
+          }}
+        >
+          {previewChild}
+        </div>
       </div>
-      <div className={s.zoomToolbar}>
-        <button type="button" className={s.zoomBtn} title="Zoom out"
-          onClick={() => setScale((z) => {
-            const n = Math.max(1, z / 1.2)
-            if (n <= 1) { setTx(0); setTy(0) }
-            return n
-          })}>−</button>
-        <button type="button" className={s.zoomBtn} title="Zoom in"
-          onClick={() => setScale((z) => Math.min(4, z * 1.2))}>+</button>
-        <button type="button" className={s.zoomBtn} title="Reset zoom / pan"
-          onClick={() => { setScale(1); setTx(0); setTy(0) }}>Fit</button>
-      </div>
+      {hasMedia && (
+        <div className={s.zoomToolbar}>
+          <button
+            type="button"
+            className={s.zoomBtn}
+            title="Zoom out"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => applyZoom(1 / ZOOM_STEP)}
+          >
+            −
+          </button>
+          <span className={s.zoomLabel}>{formatZoomLabel(view.userZoom)}</span>
+          <button
+            type="button"
+            className={s.zoomBtn}
+            title="Zoom in"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => applyZoom(ZOOM_STEP)}
+          >
+            +
+          </button>
+          <button
+            type="button"
+            className={s.zoomBtn}
+            title="Fit to canvas"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={fitToCanvas}
+          >
+            Fit
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -388,7 +490,12 @@ export default function CenterPanel() {
         {showBefore && (
           <div className={s.side}>
             <div className={s.label}>Original</div>
-            <ZoomStage resetKey={`${fo?.id || 'none'}-before`}>
+            <ZoomStage
+              resetKey={`${fo?.id || 'none'}-before`}
+              mediaWidth={fo?.width ?? 0}
+              mediaHeight={fo?.height ?? 0}
+              zoomable={!!fo}
+            >
               {isVideo
                 ? <VideoPreview src={fo?.previewUrl} loop={loopPlayback} playing={playing}
                     scrubPct={scrubPct} onDuration={handleDuration} onTimeUpdate={handleTimeUpdate} isAfter={false}
@@ -409,7 +516,12 @@ export default function CenterPanel() {
               {outFmt} · {hasVideoPreview ? '4s Preview' : 'Optimized'}
             </div>
 
-            <ZoomStage resetKey={`${fo?.id || 'none'}-after`}>
+            <ZoomStage
+              resetKey={`${fo?.id || 'none'}-after`}
+              mediaWidth={fo?.width ?? 0}
+              mediaHeight={fo?.height ?? 0}
+              zoomable={isVideo ? hasVideoPreview : !!(fo && afterUrl)}
+            >
               {isVideo ? (
                 hasVideoPreview
                   ? <VideoPreview

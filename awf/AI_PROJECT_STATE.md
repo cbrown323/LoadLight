@@ -32,7 +32,8 @@
 Use this checklist to ground Task Capsules in real paths (search `src/` if unsure):
 
 - [x] **Ingestion / accepted formats:** [`src/lib/mediaIngest.js`](../src/lib/mediaIngest.js) + `addFiles` in [`useStore.js`](../src/store/useStore.js); ingest errors → `ingestNotice` in [`LeftPanel.jsx`](../src/components/LeftPanel.jsx)
-- [x] **Canvas / static image preview:** [`CenterPanel.jsx`](../src/components/CenterPanel.jsx) — `VideoPreview` / `StaticPreview` inside `ZoomStage` (wheel zoom, pan, Fit)
+- [x] **Canvas viewport math:** [`src/lib/canvasViewport.js`](../src/lib/canvasViewport.js) — fit contain scale, pan bounds, zoom steps, native-pixel cap
+- [x] **Canvas / static image preview:** [`CenterPanel.jsx`](../src/components/CenterPanel.jsx) — `VideoPreview` / `StaticPreview` inside `ZoomStage` (fit-based 100%, zoom >100%, wheel + toolbar, pan on overflow, Fit to canvas)
 - [x] **Timeline / scrubber:** [`CenterPanel.jsx`](../src/components/CenterPanel.jsx) local state + `VideoPreview`; `prevScrub` synced while `playing` to avoid pause/jump glitches
 - [x] **Batch naming:** [`TopBar.jsx`](../src/components/TopBar.jsx) labeled field → `projectName` in [`useStore.js`](../src/store/useStore.js) (ZIP basename via [`exportEngine.js`](../src/lib/exportEngine.js))
 - [x] **Export pipeline:** Entry points in `useStore` → `src/lib/exportEngine.js` and related encoders
@@ -52,7 +53,7 @@ Use this checklist to ground Task Capsules in real paths (search `src/` if unsur
 - [x] .TIFF / .TIF ingestion (decode via `createImageBitmap` where supported; queue + preview raster)
 - [x] .MOV / .AVI ingestion (extension + `isVideoLike`; thumbnails via `<video>`)
 - [x] Batch name field visibility / UX (TopBar label, larger control, placeholder)
-- [x] Canvas / preview zoom (`ZoomStage`: wheel, +/- / Fit, drag pan when zoomed)
+- [x] Canvas / preview zoom (`ZoomStage` + `canvasViewport.js`: fit-to-canvas at 100%, zoom above 100% to native pixels, +/−/Fit toolbar, wheel, pan on overflow)
 - [x] Timeline scrubber playback (`VideoPreview`: keep `prevScrub` in sync while playing)
 
 ## Known Issues
@@ -65,7 +66,7 @@ Use this checklist to ground Task Capsules in real paths (search `src/` if unsur
 - **Input:** User adds files → `useStore.addFiles` → thumbnails / metadata → preview pipeline (`previewEncoder` / `videoPreviewEncoder` as applicable).
 - **Processing:** Quality and format from `RightPanel` / store; encoding mode from `getEncodingMode()` (`webcodecs` vs `wasm`).
 - **Output:** `exportEngine` + muxers (`mp4-muxer`, `webm-muxer`); ZIP when batching multiple outputs (jszip).
-- **Preview:** `CenterPanel` coordinates before/after URLs and scrubbing; `VideoPreview` uses `<video>` + time fraction callbacks.
+- **Preview:** `CenterPanel` coordinates before/after URLs and scrubbing; `VideoPreview` uses `<video>` + time fraction callbacks. `ZoomStage` uses `canvasViewport.js` for fit contain + user zoom; media renders at natural dimensions inside a transformed stage (no fixed 300px height cap).
 
 ## Dependencies (from package.json)
 
@@ -74,5 +75,5 @@ Use this checklist to ground Task Capsules in real paths (search `src/` if unsur
 
 ---
 
-**Last Updated:** 2026-04-30  
-**Package version:** 1.4.0 (see repo `package.json`)
+**Last Updated:** 2026-06-10  
+**Package version:** 1.5.0 (see repo `package.json`; release notes v1.5.1 for canvas viewport fix)

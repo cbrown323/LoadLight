@@ -1,5 +1,20 @@
 # DEVELOPMENT LOG
 
+## 2026-06-10 — Canvas viewport fix (Tasks 1–3)
+
+- **Accomplished:**
+  - **Task 1:** Added [`src/lib/canvasViewport.js`](../src/lib/canvasViewport.js) — fit-scale contain math, pan bounds from real overflow, zoom steps, native-pixel cap, wheel cursor anchoring helpers.
+  - **Task 2:** Rewrote `ZoomStage` in [`CenterPanel.jsx`](../src/components/CenterPanel.jsx) — 100% = fit-to-canvas (no crop), zoom above 100% for pixel inspection, working +/−/Fit toolbar, pan when overflow, `ResizeObserver`, removed `maxHeight: 300` preview cap; toolbar isolated from drag pointer capture.
+  - **Task 3:** Updated `awf/AI_PROJECT_STATE.md`, this log, and `ReleaseNotes.jsx` (v1.5.1).
+- **Decisions:**
+  - Zoom semantics: `totalScale = fitScale × userZoom`; `userZoom = 1` is “fit to canvas”; Fit resets zoom + pan.
+  - Pan limits derived from scaled media vs viewport (not viewport-only heuristic).
+  - Video after-placeholder hides zoom toolbar until encoded preview exists (`zoomable={false}`).
+- **Testing:** `npm run build` (pass). Manual browser QA on `npm run dev` still recommended (large still, split view, wheel + buttons).
+- **Follow-ups:** Deploy to load-light.vercel.app; spot-check production after push.
+
+---
+
 ## 2026-04-30 — Foreman capsule execution (single Agent session)
 
 - **Accomplished:**
