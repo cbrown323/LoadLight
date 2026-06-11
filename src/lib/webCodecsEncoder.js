@@ -28,19 +28,46 @@ import { Muxer as WebmMuxer, ArrayBufferTarget as WebmTarget } from 'webm-muxer'
 import { createVideoFrameScaler } from './canvasDownscale.js'
 
 // ── Feature detection ──────────────────────────────────────
+// Safari 16.4–18.x ships video WebCodecs only; AudioEncoder arrives in Safari 26+.
 
-export function supportsWebCodecs() {
+export function supportsWebCodecsVideo() {
   try {
+    if (!globalThis.isSecureContext) return false
     return (
       typeof VideoEncoder === 'function' &&
       typeof VideoDecoder === 'function' &&
-      typeof VideoFrame === 'function' &&
-      typeof AudioEncoder === 'function' &&
-      typeof AudioContext === 'function'
+      typeof VideoFrame === 'function'
     )
   } catch {
     return false
   }
+}
+
+/** User-visible reason when {@link supportsWebCodecsVideo} is false. */
+export function webCodecsVideoSkipReason() {
+  try {
+    if (!globalThis.isSecureContext) {
+      const host = globalThis.location?.host || 'this address'
+      return `ℹ WebCodecs needs HTTPS or localhost — you opened http://${host}; try http://localhost:5173 instead.`
+    }
+    if (typeof VideoEncoder !== 'function') return 'ℹ VideoEncoder not available in this browser.'
+    if (typeof VideoDecoder !== 'function') return 'ℹ VideoDecoder not available in this browser.'
+    if (typeof VideoFrame !== 'function') return 'ℹ VideoFrame not available in this browser.'
+  } catch {}
+  return 'ℹ WebCodecs video encode unavailable.'
+}
+
+export function supportsWebCodecsAudio() {
+  try {
+    return typeof AudioEncoder === 'function' && typeof AudioContext === 'function'
+  } catch {
+    return false
+  }
+}
+
+/** Video + audio encode (Chrome, Edge, Safari 26+). */
+export function supportsWebCodecs() {
+  return supportsWebCodecsVideo() && supportsWebCodecsAudio()
 }
 
 function hasRVFC() {
@@ -468,7 +495,10 @@ export async function encodeVideoWebCodecs(file, opts) {
   onLog(`Output: ${outFps}fps via WebCodecs ⚡ (seek capture)`)
   onProgress(5)
 
-  const includeAudio = !isGif
+  const includeAudio = !isGif && supportsWebCodecsAudio()
+  if (!isGif && !includeAudio) {
+    onLog('ℹ Audio omitted — this browser has video WebCodecs only (e.g. Safari 17–18)')
+  }
   const targetWidths = widths.length > 0 ? widths : [0]
   const results = []
 
@@ -582,7 +612,7 @@ export async function encodeVideoWebCodecs(file, opts) {
 export async function encodePreviewWebCodecs(file, opts) {
   const { quality = 72, startTime = 0 } = opts
 
-  if (!supportsWebCodecs()) return null
+  if (!supportsWebCodecsVideo()) return null
 
   const video = await loadVideo(file)
   const duration = Math.min(4, video.duration - startTime)

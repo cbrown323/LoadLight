@@ -9,7 +9,8 @@
  * WASM path:      universal fallback, handles GIF + old browsers
  */
 import { getFFmpeg, formatFfmpegWorkerError } from './ffmpegLoader.js'
-import { supportsWebCodecs, encodeVideoWebCodecs } from './webCodecsEncoder.js'
+import { canUseFfmpegWasm } from './capabilitySupport.js'
+import { supportsWebCodecsVideo, webCodecsVideoSkipReason, encodeVideoWebCodecs } from './webCodecsEncoder.js'
 import { preferFfmpegExportForFile } from './mediaIngest.js'
 
 /**
@@ -131,7 +132,7 @@ export async function encodeVideo(file, opts) {
   // Available for MP4 and WebM in Chrome 94+, Edge 94+, Safari 16.4+
   // GIF and non-container keys never use WebCodecs muxers here.
   const webCodecsEligible = (fmt === 'mp4' || fmt === 'webm')
-  if (supportsWebCodecs() && webCodecsEligible && !preferFfmpegExportForFile(file)) {
+  if (supportsWebCodecsVideo() && webCodecsEligible && !preferFfmpegExportForFile(file)) {
     onLog('🚀 Using WebCodecs (hardware-accelerated)…')
     try {
       const results = await encodeVideoWebCodecs(file, opts)
@@ -144,9 +145,17 @@ export async function encodeVideo(file, opts) {
   } else if (fmt !== 'gif') {
     if (preferFfmpegExportForFile(file)) {
       onLog('ℹ Using ffmpeg.wasm for this container (.mov / .avi / QuickTime MIME) — more reliable than browser decode.')
+    } else if (!supportsWebCodecsVideo()) {
+      onLog(webCodecsVideoSkipReason())
     } else {
       onLog('ℹ WebCodecs unavailable — using ffmpeg.wasm (slower)')
     }
+  }
+
+  if (!canUseFfmpegWasm()) {
+    throw new Error(
+      'Software video encode (ffmpeg.wasm) is not available in Safari. Use http://localhost:5173 so WebCodecs works, or export from Chrome.',
+    )
   }
 
   // ── ffmpeg.wasm fallback path ───────────────────────────

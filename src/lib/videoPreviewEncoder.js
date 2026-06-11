@@ -4,22 +4,42 @@
  *
  * Routing:
  *  1. WebCodecs path (hardware-accelerated) — preferred
- *  2. ffmpeg.wasm fallback — GIF input or unsupported browsers
+ *  2. Native source blob — Safari / non-Chromium when wasm is unavailable
+ *  3. ffmpeg.wasm fallback — Chromium only (GIF, WebCodecs failure, fragile containers)
  */
 import { getFFmpeg, formatFfmpegWorkerError } from './ffmpegLoader.js'
 import { preferFfmpegExportForFile } from './mediaIngest.js'
-import { supportsWebCodecs, encodePreviewWebCodecs } from './webCodecsEncoder.js'
+import { canUseFfmpegWasm } from './capabilitySupport.js'
+import {
+  supportsWebCodecsVideo,
+  webCodecsVideoSkipReason,
+  encodePreviewWebCodecs,
+} from './webCodecsEncoder.js'
 
 const PREVIEW_DURATION = 4
+
+/**
+ * Show the original file in the after panel when re-encode is impossible.
+ * @param {File} file
+ * @param {(pct: number) => void} [onProgress]
+ * @param {(msg: string) => void} [onLog]
+ */
+function nativeVideoPreviewFallback(file, onProgress, onLog) {
+  onLog?.('ℹ Showing original file as after preview (re-encode unavailable in this browser).')
+  onProgress?.(100)
+  const url = URL.createObjectURL(file)
+  return { url, size: file.size }
+}
 
 export async function encodeVideoPreview(file, opts, onProgress, onLog) {
   const { quality = 72, startTime = 0 } = opts
 
-  // ── WebCodecs fast-path ──
-  // .mov / .avi / QuickTime: skip WebCodecs — element decode is flaky; same as full export.
   const isGif = file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif'
   const forceFfmpeg = preferFfmpegExportForFile(file)
-  if (supportsWebCodecs() && !isGif && !forceFfmpeg) {
+  const canWebCodecs = supportsWebCodecsVideo()
+
+  // ── WebCodecs fast-path ──
+  if (canWebCodecs && !isGif && !forceFfmpeg) {
     onLog?.('🚀 Preview via WebCodecs (hardware-accelerated)…')
     try {
       onProgress?.(10)
@@ -29,13 +49,21 @@ export async function encodeVideoPreview(file, opts, onProgress, onLog) {
         onLog?.(`Done — ${(result.size / 1024).toFixed(0)} KB (WebCodecs)`)
         return result
       }
+      onLog?.('⚠ WebCodecs preview returned empty — falling back')
     } catch (err) {
       onLog?.(`⚠ WebCodecs preview failed: ${err.message} — falling back`)
       console.warn('WebCodecs preview failed:', err)
     }
+  } else if (!isGif && !forceFfmpeg) {
+    onLog?.(webCodecsVideoSkipReason())
   }
 
-  // ── ffmpeg.wasm fallback ──
+  // ── Native fallback (Safari / Firefox — wasm worker cannot load) ──
+  if (!canUseFfmpegWasm()) {
+    return nativeVideoPreviewFallback(file, onProgress, onLog)
+  }
+
+  // ── ffmpeg.wasm fallback (Chromium) ──
   if (forceFfmpeg) {
     onLog?.('ℹ Preview via ffmpeg.wasm (.mov / .avi / QuickTime) — reliable vs browser decode.')
   }
@@ -62,7 +90,6 @@ export async function encodeVideoPreview(file, opts, onProgress, onLog) {
   const crf = Math.round(38 - (quality / 100) * 16)
   const ss  = Math.max(0, startTime)
 
-  // -ss before -i = fast seek (input seeking), then trim -t seconds
   const args = [
     '-threads',  '0',
     '-ss',       String(ss),

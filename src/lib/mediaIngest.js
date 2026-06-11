@@ -2,6 +2,7 @@
  * Shared ingestion rules: allowed extensions/MIME hints, video vs image grouping,
  * and validation for the file queue (LoadLight — Vite + React, no TS).
  */
+import { isChromium } from './capabilitySupport.js'
 
 /** @typedef {{ ok: true }} IngestOk */
 /** @typedef {{ ok: false, reason: string }} IngestErr */
@@ -29,12 +30,13 @@ export function ingestExt(name) {
 }
 
 /**
- * Full export via WebCodecs uses seek-capture on a detached `video` element. QuickTime
- * (.mov) and AVI often stall (no canplaythrough / broken seeks) in Chrome while
- * ffmpeg.wasm demuxes them reliably.
+ * Prefer ffmpeg.wasm over WebCodecs for fragile containers — Chromium only.
+ * Chrome often breaks .mov / .avi seeks on a detached `<video>`; Safari and Firefox
+ * decode QuickTime natively, so WebCodecs is the better path there.
  * @param {File} file
  */
 export function preferFfmpegExportForFile(file) {
+  if (!isChromium()) return false
   const ext = ingestExt(file.name)
   if (ext === 'mov' || ext === 'avi') return true
   const t = (file.type || '').toLowerCase()

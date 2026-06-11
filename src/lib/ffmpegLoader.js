@@ -15,6 +15,7 @@
 
 import { FFmpeg } from '@ffmpeg/ffmpeg'
 import { toBlobURL, fetchFile } from '@ffmpeg/util'
+import { canUseFfmpegWasm, isChromium } from './capabilitySupport.js'
 
 let _onLog = null
 
@@ -32,8 +33,9 @@ let _loadPromiseMT = null
 let _instanceST = null
 let _loadPromiseST = null
 
-/** Check if the browser supports multi-threaded wasm */
+/** MT core needs SharedArrayBuffer + a browser that can spawn wasm pthread workers. */
 function canUseMultiThread() {
+  if (!isChromium()) return false
   try {
     return typeof SharedArrayBuffer !== 'undefined'
   } catch { return false }
@@ -79,6 +81,10 @@ async function loadFfmpegCore(multiThreaded) {
  */
 export async function getFFmpeg(onLog, opts = {}) {
   _onLog = onLog
+
+  if (!canUseFfmpegWasm()) {
+    throw new Error('ffmpeg.wasm is not supported in this browser (use WebCodecs or Chrome for software encode).')
+  }
 
   const useMT = !opts.preferSingleThread && canUseMultiThread()
 
@@ -130,7 +136,12 @@ export function formatFfmpegWorkerError(err) {
  */
 export function getEncodingMode() {
   try {
-    if (typeof VideoEncoder === 'function' && typeof VideoFrame === 'function') {
+    if (
+      globalThis.isSecureContext &&
+      typeof VideoEncoder === 'function' &&
+      typeof VideoDecoder === 'function' &&
+      typeof VideoFrame === 'function'
+    ) {
       return 'webcodecs'
     }
   } catch {}
