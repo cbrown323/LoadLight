@@ -1,0 +1,106 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.modal {
+  width: min(420px, 100%);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-cyan);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+.title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.subtitle {
+  margin: 0 0 14px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.groupCard {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.groupName {
+  font-size: 13px;
+  color: var(--cyan);
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.groupMeta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.fileList {
+  margin: 10px 0 0;
+  padding-left: 16px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.more {
+  color: var(--text-muted);
+  list-style: none;
+  margin-left: -16px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.primary,
+.secondary,
+.ghost {
+  padding: 7px 12px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.primary {
+  background: var(--cyan);
+  color: #000;
+  font-weight: 600;
+  border-color: var(--cyan);
+}
+
+.secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.ghost {
+  background: transparent;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.primary:hover { filter: brightness(1.05); }
+.secondary:hover { border-color: var(--border-cyan); }
+.ghost:hover { color: var(--text-secondary); }

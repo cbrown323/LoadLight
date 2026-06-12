@@ -1,7 +1,15 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import useStore, { fmtBytes, getExt, estimateOutputSize } from '../store/useStore'
-import { isVideoLike } from '../lib/mediaIngest.js'
+import { isVideoLike, isImageSequence, isMotionAsset } from '../lib/mediaIngest.js'
 import { previewStillFormatExt } from '../lib/exportFormatRouting.js'
+import {
+  getSequenceFrameUrl,
+  revokeSequencePreview,
+  scrubPctToFrameIndex,
+  sequenceDuration,
+  frameIndexToTime,
+  timeToFrameIndex,
+} from '../lib/sequencePreview.js'
 import {
   ZOOM_STEP,
   WHEEL_ZOOM_FACTOR,
@@ -99,6 +107,89 @@ function VideoPreview({ src, loop, playing, scrubPct, onDuration, onTimeUpdate, 
         if (vid && vid.duration && isFinite(vid.duration)) onTimeUpdate(vid.currentTime / vid.duration)
       }}
     />
+  )
+}
+
+// ─── SequencePreview ──────────────────────────────────────
+function SequencePreview({ fo, scrubPct, playing, loop, onDuration, onTimeUpdate, onEnded, isAfter }) {
+  const ownerId = `${fo.id}-${isAfter ? 'after' : 'before'}`
+  const frames = fo.frames || []
+  const fps = fo.fps || 24
+  const [src, setSrc] = useState(null)
+  const currentT = useRef(0)
+  const tickRef = useRef(0)
+
+  const duration = sequenceDuration(frames.length, fps)
+
+  useEffect(() => {
+    onDuration?.(duration)
+  }, [duration, onDuration])
+
+  useEffect(() => () => revokeSequencePreview(ownerId), [ownerId])
+
+  const showFrameAtTime = useCallback((t) => {
+    if (!frames.length) return
+    const idx = timeToFrameIndex(t, fps, frames.length)
+    setSrc(getSequenceFrameUrl(ownerId, frames, idx))
+    onTimeUpdate?.(duration > 0 ? Math.min(1, t / duration) : 0)
+  }, [frames, fps, ownerId, duration, onTimeUpdate])
+
+  useEffect(() => {
+    if (playing) return
+    const idx = scrubPctToFrameIndex(scrubPct, frames.length)
+    const t = frameIndexToTime(idx, fps)
+    currentT.current = t
+    showFrameAtTime(t)
+  }, [scrubPct, playing, frames, fps, showFrameAtTime])
+
+  useEffect(() => {
+    if (!playing || !frames.length || duration <= 0) return
+
+    tickRef.current = window.setInterval(() => {
+      let t = currentT.current + 1 / fps
+      if (t >= duration) {
+        if (loop) t = 0
+        else {
+          t = Math.max(0, duration - 1 / fps)
+          currentT.current = t
+          showFrameAtTime(t)
+          onEnded?.()
+          return
+        }
+      }
+      currentT.current = t
+      showFrameAtTime(t)
+    }, 1000 / fps)
+
+    return () => clearInterval(tickRef.current)
+  }, [playing, loop, frames.length, fps, duration, showFrameAtTime, onEnded])
+
+  if (!frames.length) {
+    return (
+      <div className={s.noPreview}>
+        <span className={s.noIcon}>🎞</span>
+        <span>Empty sequence</span>
+      </div>
+    )
+  }
+
+  if (!src) {
+    return (
+      <div className={s.noPreview}>
+        <span className={s.noIcon}>🎞</span>
+        <span>Loading sequence…</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className={s.zoomMediaFrame}>
+      <img
+        src={src}
+        alt=""
+        className={`${s.zoomMedia} ${isAfter ? s.zoomMediaAfter : s.zoomMediaBefore}`}
+      />
+    </div>
   )
 }
 
@@ -416,9 +507,11 @@ export default function CenterPanel() {
   const timeRaf = useRef(0)
   const pendingFrac = useRef(null)
 
-  const fo      = files[activeIdx]
-  const isVideo = !!(fo?.file && isVideoLike(fo.file))
-  const ext     = fo ? getExt(fo.file.name) : ''
+  const fo         = files[activeIdx]
+  const isSequence = isImageSequence(fo)
+  const isVideo    = !!(fo?.file && isVideoLike(fo.file) && !isSequence)
+  const isMotion   = isMotionAsset(fo)
+  const ext        = fo ? getExt(fo.file.name) : ''
   const hasVideoPreview = isVideo && !!fo?.afterUrl
 
   // Reset on file change
@@ -437,14 +530,14 @@ export default function CenterPanel() {
     function onKey(e) {
       const tag = document.activeElement?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
-      if (e.code === 'Space')       { e.preventDefault(); if (isVideo) setPlaying((p) => !p) }
+      if (e.code === 'Space')       { e.preventDefault(); if (isMotion) setPlaying((p) => !p) }
       if (e.code === 'ArrowLeft')   { e.preventDefault(); setScrubPct((p) => Math.max(0,   p - 5)) }
       if (e.code === 'ArrowRight')  { e.preventDefault(); setScrubPct((p) => Math.min(100, p + 5)) }
       if (e.code === 'KeyL') setLoopPlayback(!loopPlayback)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [isVideo, loopPlayback, setLoopPlayback])
+  }, [isMotion, loopPlayback, setLoopPlayback])
 
   const handleDuration = useCallback((d) => setDuration(d), [])
   const handleTimeUpdate = useCallback((frac) => {
@@ -465,8 +558,8 @@ export default function CenterPanel() {
     setScrubPct(pct); setCurrentT(pct / 100)
   }
 
-  const fmtPick  = isVideo ? formatMotion : formatStill
-  const outFmt   = isVideo
+  const fmtPick  = isMotion ? formatMotion : formatStill
+  const outFmt   = isMotion
     ? (fmtPick === 'auto' ? 'MP4' : fmtPick.toUpperCase())
     : (fo?.file ? previewStillFormatExt(fo.file, formatStill, smartFormat) : 'webp').toUpperCase()
   const outSize  = fo?.afterSize ?? (fo ? estimateOutputSize(fo.file, quality) : 0)
@@ -478,9 +571,33 @@ export default function CenterPanel() {
 
   const showBefore = viewMode === 'before' || viewMode === 'split'
   const showAfter  = viewMode === 'after'  || viewMode === 'split'
-  /** Only one `<video>` may advance scrubber % during play — avoid split-view duel between full clip and short preview. */
-  const beforeDrivesTimeline = showBefore && isVideo && viewMode !== 'after'
+  const beforeDrivesTimeline = showBefore && isMotion && viewMode !== 'after'
   const afterDrivesTimeline    = isVideo && viewMode === 'after'
+
+  const renderBeforePreview = () => {
+    if (isSequence) {
+      return (
+        <SequencePreview
+          fo={fo}
+          loop={loopPlayback}
+          playing={playing}
+          scrubPct={scrubPct}
+          onDuration={handleDuration}
+          onTimeUpdate={beforeDrivesTimeline ? handleTimeUpdate : undefined}
+          onEnded={() => setPlaying(false)}
+          isAfter={false}
+        />
+      )
+    }
+    if (isVideo) {
+      return (
+        <VideoPreview src={fo?.previewUrl} loop={loopPlayback} playing={playing}
+          scrubPct={scrubPct} onDuration={handleDuration} onTimeUpdate={handleTimeUpdate} isAfter={false}
+          ownsTimeline={beforeDrivesTimeline} />
+      )
+    }
+    return <StaticPreview src={fo?.previewUrl} isAfter={false} />
+  }
 
   return (
     <section className={s.panel}>
@@ -496,12 +613,7 @@ export default function CenterPanel() {
               mediaHeight={fo?.height ?? 0}
               zoomable={!!fo}
             >
-              {isVideo
-                ? <VideoPreview src={fo?.previewUrl} loop={loopPlayback} playing={playing}
-                    scrubPct={scrubPct} onDuration={handleDuration} onTimeUpdate={handleTimeUpdate} isAfter={false}
-                    ownsTimeline={beforeDrivesTimeline} />
-                : <StaticPreview src={fo?.previewUrl} isAfter={false} />
-              }
+              {renderBeforePreview()}
             </ZoomStage>
             {fo && <InfoChips res={res} fmt={ext.toUpperCase()} size={fmtBytes(fo.file.size)} variant="before" />}
           </div>
@@ -545,6 +657,8 @@ export default function CenterPanel() {
                       duration={duration}
                       scrubPct={scrubPct}
                     />
+              ) : isSequence ? (
+                <StaticPreview src={afterUrl} isAfter={true} loading={previewLoading} />
               ) : (
                 <StaticPreview src={afterUrl} isAfter={true} loading={previewLoading} />
               )}
@@ -574,22 +688,26 @@ export default function CenterPanel() {
       {/* Controls */}
       <div className={s.controls}>
         <button className={`${s.vcBtn} ${playing ? s.playActive : ''}`}
-          onClick={() => setPlaying((p) => !p)} disabled={!isVideo}>
+          onClick={() => setPlaying((p) => !p)} disabled={!isMotion}>
           {playing ? '⏸' : '▶'}
         </button>
         <button className={s.vcBtn}
-          onClick={() => { setScrubPct(0); setCurrentT(0); setPlaying(false) }} disabled={!isVideo}>
+          onClick={() => { setScrubPct(0); setCurrentT(0); setPlaying(false) }} disabled={!isMotion}>
           ⏮
         </button>
         <div
-          className={`${s.scrubber} ${playing && isVideo ? s.scrubberPlaying : ''}`}
-          style={{ opacity: isVideo ? 1 : 0.3, pointerEvents: isVideo ? 'auto' : 'none' }}
+          className={`${s.scrubber} ${playing && isMotion ? s.scrubberPlaying : ''}`}
+          style={{ opacity: isMotion ? 1 : 0.3, pointerEvents: isMotion ? 'auto' : 'none' }}
           onClick={seekScrubber}
         >
           <div className={s.scrubFill}  style={{ width: scrubPct + '%' }} />
           <div className={s.scrubThumb} style={{ left:  scrubPct + '%' }} />
         </div>
-        <span className={s.vcTime}>{isVideo && duration ? `${fmt2(cur)} / ${fmt2(duration)}` : '—'}</span>
+        <span className={s.vcTime}>
+          {isMotion && duration
+            ? `${fmt2(cur)} / ${fmt2(duration)}${isSequence ? ` · f${scrubPctToFrameIndex(scrubPct, fo?.frameCount || 1) + 1}` : ''}`
+            : '—'}
+        </span>
         <button className={`${s.loopTag} ${loopPlayback ? s.loopOn : ''}`}
           onClick={() => setLoopPlayback(!loopPlayback)} title="Toggle loop (L)">
           ↻ Loop

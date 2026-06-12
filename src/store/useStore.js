@@ -9,7 +9,9 @@ import { schedulePreview, cancelPreview } from '../lib/previewEncoder.js'
 import { encodeVideoPreview } from '../lib/videoPreviewEncoder.js'
 import { savePreset, loadPreset, listPresets, deletePreset } from '../lib/presets.js'
 import { getEncodingMode, formatFfmpegWorkerError } from '../lib/ffmpegLoader.js'
-import { validateIngestFile, isVideoLike, ingestExt } from '../lib/mediaIngest.js'
+import { validateIngestFile, isVideoLike, isMotionAsset, isImageSequence, ingestExt } from '../lib/mediaIngest.js'
+import { buildIngestBatch, resolveAmbiguousGroup } from '../lib/sequenceIngest.js'
+import { DEFAULT_SEQUENCE_FPS } from '../lib/sequenceNaming.js'
 import { decodeTiffToCanvas } from '../lib/tiffDecode.js'
 
 // ── helpers ───────────────────────────────────────────────
@@ -56,25 +58,34 @@ const useStore = create((set, get) => ({
   files:         [],
   activeIdx:     -1,
   ingestNotice:  null,
+  ingestMode:    'smart-sequence',
+  pendingAmbiguous: [],
 
   clearIngestNotice: () => set({ ingestNotice: null }),
+  setIngestMode: (ingestMode) => set({ ingestMode }),
 
-  addFiles: (newFiles) => {
-    const reasons = []
-    Array.from(newFiles).forEach((file) => {
-      const v = validateIngestFile(file)
-      if (!v.ok) {
-        reasons.push(v.reason)
-        return
-      }
+  /** @param {import('../lib/sequenceIngest.js').QueuePayload[]} payloads */
+  _enqueuePayloads: (payloads) => {
+    payloads.forEach((payload) => {
       const fo = {
-        file,
+        file: payload.file,
+        kind: payload.kind,
+        frames: payload.frames,
+        sequenceBaseName: payload.sequenceBaseName,
+        versionLabel: payload.versionLabel,
+        frameCount: payload.frameCount,
+        startFrame: payload.startFrame,
+        endFrame: payload.endFrame,
+        fps: payload.fps ?? DEFAULT_SEQUENCE_FPS,
         thumbUrl:   null,
-        previewUrl: null,   // original blob URL
-        afterUrl:   null,   // real encoded preview URL
-        afterSize:  null,   // real encoded size in bytes
-        realSizes:  null,   // set after export
-        width: 0, height: 0, duration: 0,
+        previewUrl: null,
+        afterUrl:   null,
+        afterSize:  null,
+        realSizes:  null,
+        width: 0, height: 0,
+        duration: payload.kind === 'sequence'
+          ? payload.frameCount / (payload.fps ?? DEFAULT_SEQUENCE_FPS)
+          : 0,
         qStatus: 'pending',
         id: Math.random().toString(36).slice(2),
       }
@@ -92,12 +103,42 @@ const useStore = create((set, get) => ({
         (msg) => get().appendLog(msg),
       )
     })
-    if (reasons.length) {
-      const msg = reasons.length === 1
-        ? reasons[0]
-        : `${reasons.length} file(s) skipped: ${reasons[0]}`
-      set({ ingestNotice: msg })
+  },
+
+  resolveAmbiguous: (groupId, choice) => {
+    const state = get()
+    const group = state.pendingAmbiguous.find((g) => g.id === groupId)
+    if (!group) return
+    const payloads = resolveAmbiguousGroup(group, choice)
+    get()._enqueuePayloads(payloads)
+    set({ pendingAmbiguous: state.pendingAmbiguous.filter((g) => g.id !== groupId) })
+  },
+
+  dismissAmbiguous: (groupId) => {
+    set((s) => ({ pendingAmbiguous: s.pendingAmbiguous.filter((g) => g.id !== groupId) }))
+  },
+
+  addFiles: async (input, opts = {}) => {
+    const state = get()
+    const mode = opts.mode ?? state.ingestMode
+    const batch = await buildIngestBatch(input, { mode, fromFolder: !!opts.fromFolder })
+
+    get()._enqueuePayloads(batch.queue)
+
+    const notices = []
+    if (batch.summary) notices.push(batch.summary)
+    if (batch.skipReasons.length) {
+      notices.push(
+        batch.skipReasons.length === 1
+          ? batch.skipReasons[0]
+          : `${batch.skipReasons.length} file(s) skipped: ${batch.skipReasons[0]}`,
+      )
     }
+
+    set({
+      pendingAmbiguous: [...state.pendingAmbiguous, ...batch.ambiguous],
+      ingestNotice: notices.length ? notices.join(' ') : null,
+    })
   },
 
   removeFile: (id) => set((s) => {
@@ -142,13 +183,16 @@ const useStore = create((set, get) => ({
   _refreshPreview: (fo) => {
     if (!fo) return
     const { formatStill, quality, advResolution } = get()
-    const isVideo = isVideoLike(fo.file)
-    if (isVideo) return   // no re-encoding for video preview
+    if (isVideoLike(fo.file) && !isImageSequence(fo)) return
+
+    const previewFile = isImageSequence(fo) && fo.frames?.[0]?.file
+      ? fo.frames[0].file
+      : fo.file
 
     set({ previewLoading: true })
 
     schedulePreview(
-      fo.file,
+      previewFile,
       { format: formatStill, quality, advResolution },
       ({ url, size }) => {
         // Revoke old after URL
@@ -409,7 +453,11 @@ const useStore = create((set, get) => ({
 // ── thumbnail generator ───────────────────────────────────
 /** @param {(msg: string) => void} [log] — e.g. TIFF ffmpeg fallback progress */
 function generateThumb(fo, cb, log = () => {}) {
-  const { file } = fo
+  let { file } = fo
+  if (isImageSequence(fo) && fo.frames?.length) {
+    const mid = fo.frames[Math.floor(fo.frames.length / 2)]
+    if (mid?.file) file = mid.file
+  }
   const ext = ingestExt(file.name)
 
   const isTiff =

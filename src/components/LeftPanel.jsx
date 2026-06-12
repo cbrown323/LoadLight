@@ -1,6 +1,7 @@
 import React, { useRef, useCallback } from 'react'
 import useStore, { fmtBytes, getExt, isPortrait } from '../store/useStore'
-import { MEDIA_INPUT_ACCEPT, isVideoLike } from '../lib/mediaIngest.js'
+import { MEDIA_INPUT_ACCEPT, isVideoLike, isImageSequence } from '../lib/mediaIngest.js'
+import IngestReviewModal from './IngestReviewModal.jsx'
 import s from './LeftPanel.module.css'
 
 const BADGE_CLASS = {
@@ -11,6 +12,18 @@ const BADGE_CLASS = {
 
 function FileBadge({ ext }) {
   return <span className={`${s.badge} ${BADGE_CLASS[ext] || s.badgePng}`}>{ext.toUpperCase()}</span>
+}
+
+function SeqBadge({ fo }) {
+  if (!isImageSequence(fo)) return null
+  const range = fo.startFrame != null && fo.endFrame != null
+    ? `${fo.startFrame}–${fo.endFrame}`
+    : `${fo.frameCount}f`
+  return (
+    <span className={s.seqBadge} title="Image sequence">
+      SEQ · {fo.frameCount}f{fo.versionLabel ? ` · ${fo.versionLabel}` : ''} · {range}
+    </span>
+  )
 }
 
 function OrientationTag({ fo }) {
@@ -28,6 +41,10 @@ function OrientationTag({ fo }) {
 
 function FileItem({ fo, index, isActive }) {
   const { setActiveIdx, removeFile } = useStore()
+  const label = isImageSequence(fo)
+    ? (fo.sequenceBaseName || fo.file.name)
+    : fo.file.name
+
   return (
     <div className={`${s.fileItem} ${isActive ? s.active : ''}`} onClick={() => setActiveIdx(index)}>
       <div className={s.thumb}>
@@ -38,13 +55,14 @@ function FileItem({ fo, index, isActive }) {
       </div>
       <div className={s.meta}>
         <div className={s.fileNameRow}>
-          <span className={s.fileName}>{fo.file.name}</span>
+          <span className={s.fileName}>{label}</span>
           <OrientationTag fo={fo} />
         </div>
         <div className={s.fileInfo}>
           {fmtBytes(fo.file.size)}&nbsp;
           {fo.width && fo.height && <span className={s.dims}>{fo.width}×{fo.height}&nbsp;</span>}
-          <FileBadge ext={getExt(fo.file.name)} />
+          <SeqBadge fo={fo} />
+          {!isImageSequence(fo) && <FileBadge ext={getExt(fo.file.name)} />}
         </div>
       </div>
       <div className={s.actions}>
@@ -66,19 +84,33 @@ function GroupDivider({ label, count }) {
 }
 
 export default function LeftPanel() {
-  const { files, activeIdx, addFiles, applyPreset, ingestNotice, clearIngestNotice } = useStore()
+  const {
+    files, activeIdx, addFiles, applyPreset, ingestNotice, clearIngestNotice,
+    ingestMode, setIngestMode, pendingAmbiguous, resolveAmbiguous, dismissAmbiguous,
+  } = useStore()
   const inputRef  = useRef()
   const folderRef = useRef()
   const [dragging, setDragging] = React.useState(false)
 
-  const handleDrop = useCallback((e) => {
-    e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files)
+  const handleDrop = useCallback(async (e) => {
+    e.preventDefault()
+    setDragging(false)
+    await addFiles(e.dataTransfer, { fromFolder: true })
   }, [addFiles])
-  const handleInput = (e) => { addFiles(e.target.files); e.target.value = '' }
 
-  // Sort: images first, then video/gif
-  const isVideoFile = (fo) => isVideoLike(fo.file)
-  const images = files.map((fo, i) => ({ fo, i })).filter(({ fo }) => !isVideoFile(fo))
+  const handleInput = async (e) => {
+    await addFiles(e.target.files)
+    e.target.value = ''
+  }
+
+  const handleFolderInput = async (e) => {
+    await addFiles(e.target.files, { fromFolder: true })
+    e.target.value = ''
+  }
+
+  const isVideoFile = (fo) => isVideoLike(fo.file) && !isImageSequence(fo)
+  const sequences = files.map((fo, i) => ({ fo, i })).filter(({ fo }) => isImageSequence(fo))
+  const images = files.map((fo, i) => ({ fo, i })).filter(({ fo }) => !isVideoFile(fo) && !isImageSequence(fo))
   const videos = files.map((fo, i) => ({ fo, i })).filter(({ fo }) => isVideoFile(fo))
 
   return (
@@ -88,24 +120,51 @@ export default function LeftPanel() {
         <span className={s.countBadge}>{files.length}</span>
         <div className={s.headerActions}>
           <button className={s.addBtn} onClick={() => inputRef.current.click()}>+ Add</button>
-          <button className={s.addBtn} onClick={() => folderRef.current.click()}>📁</button>
+          <button className={s.addBtn} title="Import folder" onClick={() => folderRef.current.click()}>📁</button>
         </div>
+      </div>
+
+      <div className={s.modeRow}>
+        <button
+          type="button"
+          className={`${s.modeBtn} ${ingestMode === 'flat' ? s.modeActive : ''}`}
+          onClick={() => setIngestMode('flat')}
+        >
+          Files
+        </button>
+        <button
+          type="button"
+          className={`${s.modeBtn} ${ingestMode === 'smart-sequence' ? s.modeActive : ''}`}
+          onClick={() => setIngestMode('smart-sequence')}
+        >
+          Sequences
+        </button>
       </div>
 
       <input ref={inputRef} type="file" multiple accept={MEDIA_INPUT_ACCEPT}
         style={{ display: 'none' }} onChange={handleInput} />
       <input ref={folderRef} type="file" webkitdirectory="" multiple
-        style={{ display: 'none' }} onChange={handleInput} />
+        style={{ display: 'none' }} onChange={handleFolderInput} />
 
       <div
         className={`${s.dropZone} ${dragging ? s.dragOver : ''}`}
         onDrop={handleDrop}
         onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
         onDragLeave={() => setDragging(false)}
-        onClick={() => inputRef.current.click()}
+        onClick={() => folderRef.current.click()}
       >
         <div className={s.dropIcon}>⬆</div>
-        <div className={s.dropText}>Drop images (incl. TIFF), GIFs, or video (MP4, WebM, MOV, AVI)</div>
+        <div className={s.dropText}>
+          Drop files or folders — {ingestMode === 'smart-sequence' ? 'auto-detects frame sequences (v001 = version, 1001 = frame)' : 'each file imports separately'}
+        </div>
+        <div className={s.dropBtns}>
+          <button type="button" className={s.dropBtn} onClick={(e) => { e.stopPropagation(); inputRef.current.click() }}>
+            Pick files
+          </button>
+          <button type="button" className={s.folderBtn} onClick={(e) => { e.stopPropagation(); folderRef.current.click() }}>
+            Pick folder
+          </button>
+        </div>
       </div>
 
       {ingestNotice && (
@@ -120,10 +179,18 @@ export default function LeftPanel() {
           <div className={s.empty}>
             <div className={s.emptyIcon}>🖼</div>
             <div>No files yet</div>
-            <div className={s.emptyHint}>Drop files above to get started</div>
+            <div className={s.emptyHint}>Drop a folder of numbered frames to get started</div>
           </div>
         ) : (
           <>
+            {sequences.length > 0 && (
+              <>
+                <GroupDivider label="Sequences" count={sequences.length} />
+                {sequences.map(({ fo, i }) => (
+                  <FileItem key={fo.id} fo={fo} index={i} isActive={i === activeIdx} />
+                ))}
+              </>
+            )}
             {images.length > 0 && (
               <>
                 <GroupDivider label="Images" count={images.length} />
@@ -143,6 +210,12 @@ export default function LeftPanel() {
           </>
         )}
       </div>
+
+      <IngestReviewModal
+        groups={pendingAmbiguous}
+        onResolve={resolveAmbiguous}
+        onDismiss={dismissAmbiguous}
+      />
 
       <div className={s.batchControls}>
         <label className={s.batchLabel}>

@@ -2,14 +2,19 @@
  * Per-file export format: still vs motion buckets, smart rules, pipeline choice.
  */
 import { resolveFormat } from './imageEncoder.js'
-import { isVideoLike } from './mediaIngest.js'
+import { isVideoLike, isImageSequence } from './mediaIngest.js'
 
 const STILL_OUT = new Set(['webp', 'avif', 'jpg', 'jpeg', 'png'])
 const MOTION_OUT = new Set(['mp4', 'webm', 'gif'])
 
+/** @param {File} file @param {{ kind?: string }|null|undefined} [fo] */
+function isMotionInput(file, fo) {
+  return isVideoLike(file) || isImageSequence(fo)
+}
+
 /** Same logic as export loop: bucket + resolveFormat + smart rules for Auto. */
-export function resolveExportRawFormat(file, formatStill, formatMotion, smartFormat) {
-  const motion = isVideoLike(file)
+export function resolveExportRawFormat(file, formatStill, formatMotion, smartFormat, fo = null) {
+  const motion = isMotionInput(file, fo)
   const setting = motion ? formatMotion : formatStill
   let rawFmt = resolveFormat(file, setting)
   if (smartFormat && motion && formatMotion === 'auto') {
@@ -26,8 +31,8 @@ export function resolveExportRawFormat(file, formatStill, formatMotion, smartFor
  * After browser codec fallback, force image encoder vs video encoder from input kind.
  * Coerces impossible pairs (still + MP4, motion + JPG) with optional logging.
  */
-export function pickExportPipeline(file, resolvedFmt, onLog = () => {}) {
-  const motion = isVideoLike(file)
+export function pickExportPipeline(file, resolvedFmt, onLog = () => {}, fo = null) {
+  const motion = isMotionInput(file, fo)
   let fmt = resolvedFmt === 'jpeg' ? 'jpg' : resolvedFmt
 
   if (fmt === 'auto') {

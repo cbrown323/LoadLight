@@ -9,14 +9,16 @@ import { buildAiMaxSnippet } from './aiMaxGenerator.js'
 import { encodeImage } from './imageEncoder.js'
 import { encodeVideo } from './videoEncoder.js'
 import { resolveWithFallback } from './formatSupport.js'
-import { isVideoLike } from './mediaIngest.js'
+import { isVideoLike, isImageSequence } from './mediaIngest.js'
 import { pickExportPipeline, resolveExportRawFormat } from './exportFormatRouting.js'
+import { encodeImageSequence } from './sequenceEncoder.js'
 
 // ── Combined HTML snippet for ALL files ───────────────────
 function buildCombinedSnippet(fileResults, useResponsive) {
   const lines = []
   fileResults.forEach(({ fo, resolvedFmt, safeWidths }) => {
-    const isVideo = isVideoLike(fo.file)
+    const isVideo = isVideoLike(fo.file) && !isImageSequence(fo)
+    const isSeq   = isImageSequence(fo)
     const name    = fo.file.name.replace(/\.[^.]+$/, '')
     const fmt     = resolvedFmt
 
@@ -63,6 +65,22 @@ async function extractPosterFrame(file) {
   })
 }
 
+async function frameFileToPoster(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      const c = document.createElement('canvas')
+      c.width = img.naturalWidth
+      c.height = img.naturalHeight
+      c.getContext('2d').drawImage(img, 0, 0)
+      c.toBlob((blob) => { URL.revokeObjectURL(url); resolve(blob) }, 'image/jpeg', 0.88)
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null) }
+    img.src = url
+  })
+}
+
 function downloadBlob(blob, filename) {
   const url  = URL.createObjectURL(blob)
   const link = document.createElement('a')
@@ -105,15 +123,16 @@ export async function runExport(params) {
 
     try {
       const isGif   = file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif'
-      const isVideo = isVideoLike(file)
+      const isVideo = isVideoLike(file) && !isImageSequence(fo)
+      const isSeq   = isImageSequence(fo)
 
-      const rawFmt = resolveExportRawFormat(file, formatStill, formatMotion, smartFormat)
+      const rawFmt = resolveExportRawFormat(file, formatStill, formatMotion, smartFormat, fo)
 
       let resolvedFmt = await resolveWithFallback(rawFmt)
       if (resolvedFmt !== rawFmt)
         onLog(`⚠ ${rawFmt.toUpperCase()} not supported — using ${resolvedFmt.toUpperCase()}`)
 
-      const { resolvedFmt: safeFmt, useVideoPipeline } = pickExportPipeline(file, resolvedFmt, onLog)
+      const { resolvedFmt: safeFmt, useVideoPipeline } = pickExportPipeline(file, resolvedFmt, onLog, fo)
       const srcW        = fo.width || 99999
       const bpForFile   = getBreakpointsForFile(fo, responsiveMode, breakpoints)
       const widths      = bpForFile.map((bp) => bp.w)
@@ -126,7 +145,14 @@ export async function runExport(params) {
 
       let outputs
 
-      if (useVideoPipeline) {
+      if (isSeq) {
+        const seqFps = fo.fps || fps || 24
+        outputs = await encodeImageSequence(fo, {
+          format: safeFmt, quality, widths: safeWidths, fps: seqFps, bitrate,
+          labelWidthsInFilename,
+          onProgress: (pct) => onFileProgress(id, pct), onLog,
+        })
+      } else if (useVideoPipeline) {
         outputs = await encodeVideo(file, {
           format: safeFmt, quality, widths: safeWidths, fps, bitrate,
           labelWidthsInFilename,
@@ -149,11 +175,13 @@ export async function runExport(params) {
       }
 
       // Poster frame
-      if (generatePoster && (isVideo || isGif)) {
-        onLog(`Extracting poster for ${file.name}…`)
-        const posterBlob = await extractPosterFrame(file)
+      if (generatePoster && (isVideo || isGif || isSeq)) {
+        onLog(`Extracting poster for ${isSeq ? fo.sequenceBaseName : file.name}…`)
+        const posterBlob = isSeq && fo.frames?.[0]
+          ? await frameFileToPoster(fo.frames[0].file)
+          : await extractPosterFrame(file)
         if (posterBlob) {
-          const posterName = file.name.replace(/\.[^.]+$/, '') + '-poster.jpg'
+          const posterName = (isSeq ? fo.sequenceBaseName : file.name.replace(/\.[^.]+$/, '')) + '-poster.jpg'
           if (exportAs === 'individual') downloadBlob(posterBlob, posterName)
           else zip.file(posterName, posterBlob)
           onLog(`✓ Poster: ${posterName}`)

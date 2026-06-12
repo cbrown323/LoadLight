@@ -69,6 +69,17 @@ export function isRasterStillImage(file) {
   return INGEST_IMAGE_EXT.has(ext)
 }
 
+/** @param {{ kind?: string }|null|undefined} fo */
+export function isImageSequence(fo) {
+  return fo?.kind === 'sequence'
+}
+
+/** Video file or imported image sequence (timeline-capable). @param {{ file: File, kind?: string }|null|undefined} fo */
+export function isMotionAsset(fo) {
+  if (!fo?.file) return false
+  return isVideoLike(fo.file) || fo.kind === 'sequence'
+}
+
 /**
  * Whether this file may be added to the processing queue.
  * @param {File} file
