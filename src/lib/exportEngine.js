@@ -9,7 +9,7 @@ import { buildAiMaxSnippet } from './aiMaxGenerator.js'
 import { encodeImage } from './imageEncoder.js'
 import { encodeVideo } from './videoEncoder.js'
 import { resolveWithFallback } from './formatSupport.js'
-import { isVideoLike, isImageSequence } from './mediaIngest.js'
+import { isVideoLike, isImageSequence, isMotionAsset } from './mediaIngest.js'
 import { pickExportPipeline, resolveExportRawFormat } from './exportFormatRouting.js'
 import { encodeImageSequence } from './sequenceEncoder.js'
 
@@ -17,12 +17,11 @@ import { encodeImageSequence } from './sequenceEncoder.js'
 function buildCombinedSnippet(fileResults, useResponsive) {
   const lines = []
   fileResults.forEach(({ fo, resolvedFmt, safeWidths }) => {
-    const isVideo = isVideoLike(fo.file) && !isImageSequence(fo)
-    const isSeq   = isImageSequence(fo)
-    const name    = fo.file.name.replace(/\.[^.]+$/, '')
-    const fmt     = resolvedFmt
+    const motion = isMotionAsset(fo)
+    const name   = fo.sequenceBaseName || fo.file.name.replace(/\.[^.]+$/, '')
+    const fmt    = resolvedFmt
 
-    if (isVideo) {
+    if (motion) {
       lines.push('<video controls playsinline>')
       if (useResponsive && safeWidths.length > 0) {
         const sorted = [...safeWidths].sort((a, b) => a - b)

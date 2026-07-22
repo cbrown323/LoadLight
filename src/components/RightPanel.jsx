@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import useStore, { getExt, qualityZone, isPortrait } from '../store/useStore'
 import { getBreakpointsForFile } from '../lib/breakpointPresets.js'
 import { buildAiMaxSnippet } from '../lib/aiMaxGenerator.js'
-import { isVideoLike } from '../lib/mediaIngest.js'
+import { isMotionAsset } from '../lib/mediaIngest.js'
 import { previewStillFormatExt } from '../lib/exportFormatRouting.js'
 import Toggle from './Toggle'
 import s from './RightPanel.module.css'
@@ -29,19 +29,19 @@ function buildHtmlSnippet(files, formatStill, formatMotion, breakpoints, respons
   const lines = []
 
   files.forEach((fo) => {
-    const isVideo = isVideoLike(fo.file)
-    const name    = fo.file.name.replace(/\.[^.]+$/, '')
-    const fmt     = isVideo
+    const motion = isMotionAsset(fo)
+    const name   = fo.sequenceBaseName || fo.file.name.replace(/\.[^.]+$/, '')
+    const fmt    = motion
       ? (formatMotion === 'auto' ? 'mp4' : formatMotion)
       : previewStillFormatExt(fo.file, formatStill, smartFormat)
-    const srcW    = fo.width || 99999
+    const srcW   = fo.width || 99999
 
     const bpForFile =
       responsiveMode !== 'none' ? getBreakpointsForFile(fo, responsiveMode, breakpoints) : []
     const safeBps = bpForFile.filter((bp) => bp.w <= srcW).sort((a, b) => a.w - b.w)
     const useFileResponsive = safeBps.length > 0
 
-    if (isVideo) {
+    if (motion) {
       lines.push(`<video controls playsinline>`)
       if (useFileResponsive) {
         const largest = [...safeBps].sort((a, b) => b.w - a.w)[0]
@@ -94,7 +94,7 @@ export default function RightPanel() {
 
   const fo      = files[activeIdx]
   const srcW    = fo?.width || 0
-  const motion   = fo && isVideoLike(fo.file)
+  const motion   = fo && isMotionAsset(fo)
   const fmtPick  = motion ? formatMotion : formatStill
   const outExt   = motion
     ? (fmtPick === 'auto' ? 'mp4' : fmtPick)
@@ -114,8 +114,8 @@ export default function RightPanel() {
     ? buildHtmlSnippet(files, formatStill, formatMotion, breakpoints, responsiveMode, smartFormat)
     : ''
 
-  const queueHasStill  = files.some((f) => !isVideoLike(f.file))
-  const queueHasMotion = files.some((f) => isVideoLike(f.file))
+  const queueHasStill  = files.some((f) => !isMotionAsset(f))
+  const queueHasMotion = files.some((f) => isMotionAsset(f))
   const showStillFmt   = files.length === 0 || queueHasStill
   const showMotionFmt  = files.length === 0 || queueHasMotion
 

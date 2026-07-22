@@ -1,5 +1,5 @@
 import { getBreakpointsForFile } from './breakpointPresets.js'
-import { isVideoLike } from './mediaIngest.js'
+import { isMotionAsset } from './mediaIngest.js'
 import { resolveExportRawFormat, pickExportPipeline } from './exportFormatRouting.js'
 import { resolveWithFallback } from './formatSupport.js'
 
@@ -76,13 +76,13 @@ export async function buildAiMaxSnippet(files, {
 
   for (let i = 0; i < files.length; i++) {
     const fo      = files[i]
-    const isVideo = isVideoLike(fo.file)
+    const isVideo = isMotionAsset(fo)
     const type = isVideo ? 'vid' : 'img'
-    const name = fo.file.name.replace(/\.[^.]+$/, '')
+    const name = fo.sequenceBaseName || fo.file.name.replace(/\.[^.]+$/, '')
 
-    const rawFmt = resolveExportRawFormat(fo.file, formatStill, formatMotion, smartFormat)
+    const rawFmt = resolveExportRawFormat(fo.file, formatStill, formatMotion, smartFormat, fo)
     const afterFallback = await resolveWithFallback(rawFmt)
-    const { resolvedFmt: fmt } = pickExportPipeline(fo.file, afterFallback, () => {})
+    const { resolvedFmt: fmt } = pickExportPipeline(fo.file, afterFallback, () => {}, fo)
 
     // Responsive sizes — nested [[w,h], ...] skipping upscales
     let sizes = null
