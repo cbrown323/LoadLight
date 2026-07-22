@@ -3,6 +3,7 @@
  *
  * Versions: varying token is v001, ver02, version3, etc. → separate queue items.
  * Sequences: varying token is a frame index (1, 01, 1001, …) with stable prefix → one group.
+ * Camera rolls (IMG_1867, DSC_0123, …) are shot IDs, not frames → always singles.
  *
  * Manual test vectors (expected):
  *   fileexample_v001.jpg ×3           → 3 singles (version stack)
@@ -10,6 +11,7 @@
  *   fileexample_v001.1001 + v002.1001 → 2 singles (same frame, different versions)
  *   render.1001–1050.exr               → 1 sequence
  *   hero_001–120.png                  → 1 sequence (medium confidence)
+ *   IMG_1867–1871.jpg                 → 5 singles (camera roll, not a sequence)
  */
 
 /** @typedef {'literal'|'frame'|'version'|'unknown-numeric'} TokenKind */
@@ -53,6 +55,16 @@ export const DEFAULT_SEQUENCE_FPS = 24
 
 const VERSION_RAW_RE = /^v(?:er(?:sion)?)?(\d+)$/i
 
+/**
+ * Camera / phone still naming — sequential shot counters, not frame indices.
+ * Matches IMG_1867, DSC_0123, DSCF0001, _MG_1234, PXL_…, etc.
+ * @param {string} stem
+ */
+export function isCameraRollStem(stem) {
+  if (/^PXL[_-]/i.test(stem)) return true
+  return /^(?:IMG|DSC|DSCF|_MG|MG|SAM|PICT|PIC|PHOTO|MOV)[_-]?\d+$/i.test(stem)
+}
+
 /** @param {string} name */
 export function ingestStemAndExt(name) {
   const slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'))
@@ -83,16 +95,29 @@ export function findNumericRuns(stem) {
       raw,
       digits,
       value: parseInt(digits, 10),
-      kind: classifyRun(raw, digits),
+      kind: classifyRun(raw, digits, stem, start),
     })
   }
   return runs
 }
 
-/** @param {string} raw @param {string} digits */
-function classifyRun(raw, digits) {
+/**
+ * @param {string} raw
+ * @param {string} digits
+ * @param {string} stem
+ * @param {number} start
+ */
+function classifyRun(raw, digits, stem, start) {
   if (VERSION_RAW_RE.test(raw)) return 'version'
+  // Shot IDs on camera rolls are 4-digit counters — never treat as frames.
+  if (isCameraRollStem(stem)) return 'unknown-numeric'
+
   const value = parseInt(digits, 10)
+  const prev = start > 0 ? stem[start - 1] : ''
+  // Nuke / ffmpeg image2: name.1001.ext
+  if (prev === '.') return 'frame'
+  // Zero-padded indices (0001, 0100) strongly suggest frames
+  if (digits.length >= 3 && digits[0] === '0') return 'frame'
   if (digits.length >= 4 || value >= 1001) return 'frame'
   if (value >= 1 && value <= 999) return 'unknown-numeric'
   return 'frame'
@@ -161,6 +186,9 @@ export function planIngest(files, opts = {}) {
 
   for (const file of files) {
     const { stem, ext } = ingestStemAndExt(file.name)
+    // Camera roll counters (IMG_1867, DSC_0123, …) are separate stills, not a sequence.
+    if (isCameraRollStem(stem)) continue
+
     const runs = findNumericRuns(stem)
     if (!runs.length) continue
 
