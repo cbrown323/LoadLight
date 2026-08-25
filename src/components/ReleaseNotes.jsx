@@ -2,11 +2,22 @@ import React, { useState, useRef, useEffect } from 'react'
 import s from './ReleaseNotes.module.css'
 
 /** Latest shipped version — TopBar reads this so it stays aligned with release notes. */
-export const LATEST_RELEASE_VERSION = 'v1.5.1'
+export const LATEST_RELEASE_VERSION = 'v1.5.2'
 
 const NOTES = [
   {
     version: LATEST_RELEASE_VERSION,
+    date: 'Aug 2026',
+    items: [
+      'Smart Import detects numbered image sequences and keeps version labels, while Files continues to import every asset independently',
+      'EXR and DPX are accepted alongside standard still-image formats for professional sequence workflows',
+      'Timestamped screenshots stay as individual images instead of being grouped into a sequence',
+      'Smoother canvas hand drag — native image dragging no longer interrupts panning',
+      'Hover any truncated queue filename to see the full name',
+    ],
+  },
+  {
+    version: 'v1.5.1',
     date: 'Jun 2026',
     items: [
       'Canvas preview fit-to-canvas at 100% — media fills the preview pane with contain scaling (no crop)',

@@ -1,5 +1,17 @@
 # DEVELOPMENT LOG
 
+## 2026-08-24 — Smart Import and canvas navigation
+
+- **Accomplished:** Replaced the separate Sequences and VFX Tree choices with a two-mode importer: **Files** imports every asset independently, while **Smart Import** detects numbered image sequences, retains version labels, and asks the user to resolve only ambiguous numbered groups.
+- **Removed:** The VFX shot/version/frame tree, its manual merge/split review dialog, and its VFX-specific warning flow. EXR and DPX remain accepted input formats; Smart Import now handles them through the same sequence-detection path as other still images.
+- **Fix:** Timestamped macOS screenshot names (for example, `Screenshot 2026-06-24 at 02.24.50.png`) are explicitly treated as separate stills, even when selected together.
+- **Decision:** Smart Import is the default because it covers ordinary frame runs and versioned renders without requiring users to understand a separate VFX-specific organization model.
+- **Fix:** Canvas panning now tracks the pointer on animation frames, prevents native image dragging from stealing the gesture, and commits the final drag position when the pointer is released.
+- **Polish:** File names reveal their full value on hover, including names truncated in the queue.
+- **Testing:** `npm run build` (pass).
+
+---
+
 ## 2026-06-10 — Canvas viewport fix (Tasks 1–3)
 
 - **Accomplished:**

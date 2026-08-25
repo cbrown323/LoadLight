@@ -31,7 +31,7 @@
 
 Use this checklist to ground Task Capsules in real paths (search `src/` if unsure):
 
-- [x] **Ingestion / accepted formats:** [`src/lib/mediaIngest.js`](../src/lib/mediaIngest.js) + `addFiles` in [`useStore.js`](../src/store/useStore.js); ingest errors → `ingestNotice` in [`LeftPanel.jsx`](../src/components/LeftPanel.jsx)
+- [x] **Ingestion / accepted formats:** [`src/lib/mediaIngest.js`](../src/lib/mediaIngest.js) + `addFiles` in [`useStore.js`](../src/store/useStore.js); **Files** imports assets independently, while **Smart Import** detects image sequences and asks the user to resolve ambiguous numbered groups; ingest errors → `ingestNotice` in [`LeftPanel.jsx`](../src/components/LeftPanel.jsx)
 - [x] **Canvas viewport math:** [`src/lib/canvasViewport.js`](../src/lib/canvasViewport.js) — fit contain scale, pan bounds, zoom steps, native-pixel cap
 - [x] **Canvas / static image preview:** [`CenterPanel.jsx`](../src/components/CenterPanel.jsx) — `VideoPreview` / `StaticPreview` inside `ZoomStage` (fit-based 100%, zoom >100%, wheel + toolbar, pan on overflow, Fit to canvas)
 - [x] **Timeline / scrubber:** [`CenterPanel.jsx`](../src/components/CenterPanel.jsx) local state + `VideoPreview`; `prevScrub` synced while `playing` to avoid pause/jump glitches
@@ -75,5 +75,5 @@ Use this checklist to ground Task Capsules in real paths (search `src/` if unsur
 
 ---
 
-**Last Updated:** 2026-06-10  
+**Last Updated:** 2026-08-24
 **Package version:** 1.5.0 (see repo `package.json`; release notes v1.5.1 for canvas viewport fix)

@@ -9,7 +9,7 @@ import { schedulePreview, cancelPreview } from '../lib/previewEncoder.js'
 import { encodeVideoPreview } from '../lib/videoPreviewEncoder.js'
 import { savePreset, loadPreset, listPresets, deletePreset } from '../lib/presets.js'
 import { getEncodingMode, formatFfmpegWorkerError } from '../lib/ffmpegLoader.js'
-import { validateIngestFile, isVideoLike, isMotionAsset, isImageSequence, ingestExt } from '../lib/mediaIngest.js'
+import { validateIngestFile, isVideoLike, isMotionAsset, isImageSequence, isVFXFormat, ingestExt } from '../lib/mediaIngest.js'
 import { buildIngestBatch, resolveAmbiguousGroup } from '../lib/sequenceIngest.js'
 import { DEFAULT_SEQUENCE_FPS } from '../lib/sequenceNaming.js'
 import { decodeTiffToCanvas } from '../lib/tiffDecode.js'
@@ -184,6 +184,7 @@ const useStore = create((set, get) => ({
     if (!fo) return
     const { formatStill, quality, advResolution } = get()
     if (isVideoLike(fo.file) && !isImageSequence(fo)) return
+    if (isVFXFormat(fo.file)) return
 
     const previewFile = isImageSequence(fo) && fo.frames?.[0]?.file
       ? fo.frames[0].file
@@ -459,6 +460,13 @@ function generateThumb(fo, cb, log = () => {}) {
     if (mid?.file) file = mid.file
   }
   const ext = ingestExt(file.name)
+
+  // Browsers do not natively decode EXR/DPX. They can still be passed to the
+  // sequence ffmpeg pipeline, but must not start an image preview that never resolves.
+  if (isVFXFormat(file)) {
+    cb({ ...fo, thumbUrl: null, previewUrl: null, width: 0, height: 0 })
+    return
+  }
 
   const isTiff =
     ext === 'tif' || ext === 'tiff' || (file.type || '').toLowerCase() === 'image/tiff'

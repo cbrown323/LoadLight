@@ -12,6 +12,7 @@
  *   render.1001–1050.exr               → 1 sequence
  *   hero_001–120.png                  → 1 sequence (medium confidence)
  *   IMG_1867–1871.jpg                 → 5 singles (camera roll, not a sequence)
+ *   Screenshot 2026-06-24 at 02.24.50–02.25.05.png → singles (timestamped captures)
  */
 
 /** @typedef {'literal'|'frame'|'version'|'unknown-numeric'} TokenKind */
@@ -63,6 +64,17 @@ const VERSION_RAW_RE = /^v(?:er(?:sion)?)?(\d+)$/i
 export function isCameraRollStem(stem) {
   if (/^PXL[_-]/i.test(stem)) return true
   return /^(?:IMG|DSC|DSCF|_MG|MG|SAM|PICT|PIC|PHOTO|MOV)[_-]?\d+$/i.test(stem)
+}
+
+/**
+ * Desktop screenshot names encode their capture timestamp, not a frame index.
+ * macOS uses “Screenshot 2026-06-24 at 02.24.50”; “Screen Shot” is used by
+ * older macOS releases. Treat the whole timestamped pattern as independent
+ * captures even when several are taken seconds apart.
+ * @param {string} stem
+ */
+export function isTimestampedScreenshotStem(stem) {
+  return /^(?:screenshot|screen[ _-]?shot)\s+\d{4}[-_.]\d{1,2}[-_.]\d{1,2}\s+(?:at\s+)?\d{1,2}[.:_-]\d{2}[.:_-]\d{2}$/i.test(stem)
 }
 
 /** @param {string} name */
@@ -186,8 +198,8 @@ export function planIngest(files, opts = {}) {
 
   for (const file of files) {
     const { stem, ext } = ingestStemAndExt(file.name)
-    // Camera roll counters (IMG_1867, DSC_0123, …) are separate stills, not a sequence.
-    if (isCameraRollStem(stem)) continue
+    // Camera roll counters and desktop screenshot timestamps are independent stills.
+    if (isCameraRollStem(stem) || isTimestampedScreenshotStem(stem)) continue
 
     const runs = findNumericRuns(stem)
     if (!runs.length) continue
@@ -303,8 +315,7 @@ function buildSequenceGroup(signature, ext, sortedMembers, sampleStem, confidenc
 
   const versionRun = findFixedVersionRun(sampleStem, findNumericRuns(sampleStem))
   const versionLabel = extractVersionLabel(sampleStem, versionRun)
-  let displayName = displayNameFromSignature(signature, ext)
-  if (versionLabel) displayName = displayName.replace('#', versionLabel)
+  const displayName = displayNameFromSignature(signature, ext)
 
   return {
     id: nextId(),

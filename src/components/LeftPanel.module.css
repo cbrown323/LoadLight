@@ -337,6 +337,34 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
+  position: relative;
+}
+.fileNameRow::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  z-index: 10;
+  width: max-content;
+  max-width: 168px;
+  padding: 5px 7px;
+  border: 1px solid var(--border-cyan);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.fileNameRow:hover::after {
+  opacity: 1;
+  transform: translateY(0);
 }
 .orientTag {
   flex-shrink: 0;

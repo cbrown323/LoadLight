@@ -54,8 +54,8 @@ function FileItem({ fo, index, isActive }) {
         }
       </div>
       <div className={s.meta}>
-        <div className={s.fileNameRow}>
-          <span className={s.fileName}>{label}</span>
+        <div className={s.fileNameRow} data-tooltip={label}>
+          <span className={s.fileName} title={label}>{label}</span>
           <OrientationTag fo={fo} />
         </div>
         <div className={s.fileInfo}>
@@ -137,7 +137,7 @@ export default function LeftPanel() {
           className={`${s.modeBtn} ${ingestMode === 'smart-sequence' ? s.modeActive : ''}`}
           onClick={() => setIngestMode('smart-sequence')}
         >
-          Sequences
+          Smart Import
         </button>
       </div>
 
@@ -155,7 +155,7 @@ export default function LeftPanel() {
       >
         <div className={s.dropIcon}>⬆</div>
         <div className={s.dropText}>
-          Drop files or folders — {ingestMode === 'smart-sequence' ? 'auto-detects frame sequences (v001 = version, 1001 = frame)' : 'each file imports separately'}
+          Drop files or folders — {ingestMode === 'smart-sequence' ? 'detects numbered frame sequences and keeps versions labelled' : 'each file imports separately'}
         </div>
         <div className={s.dropBtns}>
           <button type="button" className={s.dropBtn} onClick={(e) => { e.stopPropagation(); inputRef.current.click() }}>

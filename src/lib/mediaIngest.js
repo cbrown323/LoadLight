@@ -13,6 +13,9 @@ export const INGEST_IMAGE_EXT = new Set([
   'png', 'jpg', 'jpeg', 'webp', 'avif', 'gif', 'tif', 'tiff',
 ])
 
+/** VFX-specific extensions (EXR, DPX) for professional formats. */
+export const INGEST_VFX_EXT = new Set(['exr', 'dpx'])
+
 /** Video-like extensions (may carry generic MIME like octet-stream). */
 export const INGEST_VIDEO_EXT = new Set(['mp4', 'webm', 'mov', 'avi'])
 
@@ -66,12 +69,18 @@ export function isRasterStillImage(file) {
   const t = (file.type || '').toLowerCase()
   if (t.startsWith(IMAGE_MIME_PREFIX)) return true
   const ext = ingestExt(file.name)
-  return INGEST_IMAGE_EXT.has(ext)
+  return INGEST_IMAGE_EXT.has(ext) || INGEST_VFX_EXT.has(ext)
 }
 
 /** @param {{ kind?: string }|null|undefined} fo */
 export function isImageSequence(fo) {
   return fo?.kind === 'sequence'
+}
+
+/** Check if a file is a VFX format (EXR, DPX). @param {File} file */
+export function isVFXFormat(file) {
+  const ext = ingestExt(file.name)
+  return INGEST_VFX_EXT.has(ext)
 }
 
 /** Video file or imported image sequence (timeline-capable). @param {{ file: File, kind?: string }|null|undefined} fo */
@@ -99,7 +108,7 @@ export function validateIngestFile(file) {
 
   return {
     ok: false,
-    reason: `Unsupported file type: “${file.name}” (${t || 'no MIME'}). Use images (${[...INGEST_IMAGE_EXT].join(', ')}) or video (${[...INGEST_VIDEO_EXT].join(', ')}).`,
+    reason: `Unsupported file type: "${file.name}" (${t || 'no MIME'}). Use images (${[...INGEST_IMAGE_EXT].join(', ')}, exr, dpx) or video (${[...INGEST_VIDEO_EXT].join(', ')}).`,
   }
 }
 
@@ -116,6 +125,8 @@ export const MEDIA_INPUT_ACCEPT = [
   '.jpeg',
   '.tif',
   '.tiff',
+  '.exr',
+  '.dpx',
   '.mp4',
   '.webm',
   '.mov',

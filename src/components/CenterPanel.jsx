@@ -315,7 +315,9 @@ function ZoomStage({ resetKey, mediaWidth = 0, mediaHeight = 0, zoomable = true,
   const [viewport, setViewport] = useState({ width: 0, height: 0 })
   const [measured, setMeasured] = useState({ width: 0, height: 0 })
   const [view, setView] = useState({ userZoom: 1, panX: 0, panY: 0 })
-  const drag = useRef({ on: false, sx: 0, sy: 0, panX0: 0, panY0: 0 })
+  const drag = useRef({ on: false, sx: 0, sy: 0, panX0: 0, panY0: 0, bounds: null })
+  const pendingPan = useRef(null)
+  const panRaf = useRef(0)
 
   const mediaW = mediaWidth || measured.width
   const mediaH = mediaHeight || measured.height
@@ -349,6 +351,10 @@ function ZoomStage({ resetKey, mediaWidth = 0, mediaHeight = 0, zoomable = true,
     })
     ro.observe(el)
     return () => ro.disconnect()
+  }, [])
+
+  useEffect(() => () => {
+    if (panRaf.current) cancelAnimationFrame(panRaf.current)
   }, [])
 
   useEffect(() => {
@@ -398,21 +404,44 @@ function ZoomStage({ resetKey, mediaWidth = 0, mediaHeight = 0, zoomable = true,
   const onPointerDown = (e) => {
     if (!hasMedia || !panEnabled(metrics.bounds)) return
     if (e.button !== 0) return
+    e.preventDefault()
     e.currentTarget.setPointerCapture(e.pointerId)
-    drag.current = { on: true, sx: e.clientX, sy: e.clientY, panX0: view.panX, panY0: view.panY }
+    drag.current = {
+      on: true,
+      sx: e.clientX,
+      sy: e.clientY,
+      panX0: view.panX,
+      panY0: view.panY,
+      bounds: metrics.bounds,
+    }
   }
 
   const onPointerMove = (e) => {
     if (!drag.current.on) return
+    e.preventDefault()
     const dx = e.clientX - drag.current.sx
     const dy = e.clientY - drag.current.sy
-    const p = clampPan(drag.current.panX0 + dx, drag.current.panY0 + dy, metrics.bounds)
-    setView((v) => ({ ...v, panX: p.x, panY: p.y }))
+    const p = clampPan(drag.current.panX0 + dx, drag.current.panY0 + dy, drag.current.bounds)
+    pendingPan.current = p
+    if (panRaf.current) return
+    panRaf.current = requestAnimationFrame(() => {
+      panRaf.current = 0
+      const nextPan = pendingPan.current
+      pendingPan.current = null
+      if (nextPan) setView((v) => ({ ...v, panX: nextPan.x, panY: nextPan.y }))
+    })
   }
 
   const endDrag = (e) => {
     try { e.currentTarget.releasePointerCapture(e.pointerId) } catch (_) {}
     drag.current.on = false
+    if (panRaf.current) {
+      cancelAnimationFrame(panRaf.current)
+      panRaf.current = 0
+    }
+    const nextPan = pendingPan.current
+    pendingPan.current = null
+    if (nextPan) setView((v) => ({ ...v, panX: nextPan.x, panY: nextPan.y }))
   }
 
   const fitToCanvas = () => setView({ userZoom: 1, panX: 0, panY: 0 })
@@ -438,6 +467,7 @@ function ZoomStage({ resetKey, mediaWidth = 0, mediaHeight = 0, zoomable = true,
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
+        onDragStart={(e) => e.preventDefault()}
       >
         <div
           className={s.zoomInner}

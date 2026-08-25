@@ -54,6 +54,7 @@
   justify-content: center;
   overflow: hidden;
   touch-action: none;
+  user-select: none;
 }
 .zoomInner {
   flex-shrink: 0;
@@ -71,6 +72,8 @@
   height: 100%;
   border-radius: 6px;
   background: #000;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 .zoomMediaBefore {
   border: 1px solid var(--border);
@@ -473,4 +476,3 @@
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
-
