@@ -1,4 +1,5 @@
 import React from 'react'
+import { Analytics } from '@vercel/analytics/react'
 import TopBar      from './components/TopBar'
 import LeftPanel   from './components/LeftPanel'
 import CenterPanel from './components/CenterPanel'
@@ -16,6 +17,7 @@ export default function App() {
         <RightPanel />
       </div>
       <BottomBar />
+      <Analytics />
     </div>
   )
 }
