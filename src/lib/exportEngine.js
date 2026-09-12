@@ -4,6 +4,9 @@
  * AI Max snippet (single file for all assets), AVIF fallback, upscale guard
  */
 import JSZip from 'jszip'
+import { createContactSheet } from './contactSheet.js'
+import { canvasToJpeg, extractVideoPoster } from './mediaInspector.js'
+import { timeToFrameIndex } from './sequencePreview.js'
 import { getBreakpointsForFile } from './breakpointPresets.js'
 import { buildAiMaxSnippet } from './aiMaxGenerator.js'
 import { encodeImage } from './imageEncoder.js'
@@ -48,36 +51,29 @@ function buildCombinedSnippet(fileResults, useResponsive) {
   return lines.join('\n')
 }
 
-async function extractPosterFrame(file) {
-  return new Promise((resolve) => {
-    const url = URL.createObjectURL(file)
-    const vid = document.createElement('video')
-    vid.src = url; vid.muted = true; vid.playsInline = true; vid.currentTime = 0.5
-    vid.onloadeddata = () => {
-      const c = document.createElement('canvas')
-      c.width = vid.videoWidth; c.height = vid.videoHeight
-      c.getContext('2d').drawImage(vid, 0, 0)
-      c.toBlob((blob) => { URL.revokeObjectURL(url); resolve(blob) }, 'image/jpeg', 0.88)
-    }
-    vid.onerror = () => { URL.revokeObjectURL(url); resolve(null) }
-    vid.load()
-  })
-}
-
 async function frameFileToPoster(file) {
-  return new Promise((resolve) => {
-    const url = URL.createObjectURL(file)
-    const img = new Image()
-    img.onload = () => {
-      const c = document.createElement('canvas')
-      c.width = img.naturalWidth
-      c.height = img.naturalHeight
-      c.getContext('2d').drawImage(img, 0, 0)
-      c.toBlob((blob) => { URL.revokeObjectURL(url); resolve(blob) }, 'image/jpeg', 0.88)
-    }
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(null) }
-    img.src = url
-  })
+  const url = URL.createObjectURL(file)
+  const img = new Image()
+  let timer
+  try {
+    await new Promise((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('Poster image decoding timed out.')), 30000)
+      img.onload = resolve
+      img.onerror = () => reject(new Error('Could not decode the selected sequence frame.'))
+      img.src = url
+    })
+    const canvas = document.createElement('canvas')
+    canvas.width = img.naturalWidth
+    canvas.height = img.naturalHeight
+    canvas.getContext('2d').drawImage(img, 0, 0)
+    return await canvasToJpeg(canvas)
+  } finally {
+    clearTimeout(timer)
+    img.onload = null
+    img.onerror = null
+    img.src = ''
+    URL.revokeObjectURL(url)
+  }
 }
 
 function downloadBlob(blob, filename) {
@@ -153,6 +149,7 @@ export async function runExport(params) {
         })
       } else if (useVideoPipeline) {
         outputs = await encodeVideo(file, {
+          audioTrack: fo.audioTrack ?? 'auto',
           format: safeFmt, quality, widths: safeWidths, fps, bitrate,
           labelWidthsInFilename,
           onProgress: (pct) => onFileProgress(id, pct), onLog,
@@ -176,14 +173,32 @@ export async function runExport(params) {
       // Poster frame
       if (generatePoster && (isVideo || isGif || isSeq)) {
         onLog(`Extracting poster for ${isSeq ? fo.sequenceBaseName : file.name}…`)
-        const posterBlob = isSeq && fo.frames?.[0]
-          ? await frameFileToPoster(fo.frames[0].file)
-          : await extractPosterFrame(file)
-        if (posterBlob) {
+        try {
+          const posterTime = fo.posterTime ?? 0
+          const frameIndex = isSeq ? timeToFrameIndex(posterTime, fo.fps || 24, fo.frames?.length || 0) : 0
+          const result = isSeq && fo.frames?.[frameIndex]
+            ? { blob: await frameFileToPoster(fo.frames[frameIndex].file), timestamp: frameIndex / (fo.fps || 24) }
+            : await extractVideoPoster(file, posterTime)
+          if (!result.blob) throw new Error('Could not decode the selected poster frame.')
           const posterName = (isSeq ? fo.sequenceBaseName : file.name.replace(/\.[^.]+$/, '')) + '-poster.jpg'
-          if (exportAs === 'individual') downloadBlob(posterBlob, posterName)
-          else zip.file(posterName, posterBlob)
-          onLog(`✓ Poster: ${posterName}`)
+          if (exportAs === 'individual') downloadBlob(result.blob, posterName)
+          else zip.file(posterName, result.blob)
+          onLog(`✓ Poster: ${posterName} (frame at ${result.timestamp.toFixed(3)} s)`)
+        } catch (err) {
+          onLog(`⚠ Poster skipped for ${file.name}: ${err.message}`)
+        }
+      }
+
+      if (fo.contactSheet && isVideo) {
+        try {
+          onLog(`Creating contact sheet for ${file.name}…`)
+          const sheet = await createContactSheet(file)
+          const sheetName = `${file.name.replace(/\.[^.]+$/, '')}-contact-sheet.jpg`
+          if (exportAs === 'individual') downloadBlob(sheet.blob, sheetName)
+          else zip.file(sheetName, sheet.blob)
+          onLog(`✓ Contact sheet: ${sheetName}`)
+        } catch (err) {
+          onLog(`⚠ Contact sheet skipped for ${file.name}: ${err.message}`)
         }
       }
 

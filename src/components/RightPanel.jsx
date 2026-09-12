@@ -5,6 +5,7 @@ import { buildAiMaxSnippet } from '../lib/aiMaxGenerator.js'
 import { isMotionAsset } from '../lib/mediaIngest.js'
 import { previewStillFormatExt } from '../lib/exportFormatRouting.js'
 import Toggle from './Toggle'
+import MediaInspector from './MediaInspector.jsx'
 import s from './RightPanel.module.css'
 
 const STILL_LABELS = ['Auto ✦', 'WebP', 'AVIF', 'JPG', 'PNG']
@@ -128,6 +129,7 @@ export default function RightPanel() {
 
   return (
     <aside className={s.panel}>
+      <MediaInspector key={fo?.id || 'empty'} fo={fo} />
 
       {/* ── FORMAT ── */}
       <Section title="Output Format">

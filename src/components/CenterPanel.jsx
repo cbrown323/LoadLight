@@ -522,7 +522,7 @@ function ZoomStage({ resetKey, mediaWidth = 0, mediaHeight = 0, zoomable = true,
 export default function CenterPanel() {
   const {
     files, activeIdx, viewMode, formatStill, formatMotion, smartFormat, quality,
-    loopPlayback, setLoopPlayback,
+    loopPlayback, setLoopPlayback, setPosterTime,
     previewLoading,
     videoPreviewLoading, videoPreviewPct, videoPreviewLog, videoPreviewError,
     encodeVideoPreview,
@@ -738,6 +738,11 @@ export default function CenterPanel() {
             ? `${fmt2(cur)} / ${fmt2(duration)}${isSequence ? ` · f${scrubPctToFrameIndex(scrubPct, fo?.frameCount || 1) + 1}` : ''}`
             : '—'}
         </span>
+        {isMotion && viewMode !== 'after' && <button className={s.loopTag}
+          title="Use the current source timeline time for this file's poster"
+          onClick={() => { setPlaying(false); setPosterTime(fo.id, duration * scrubPct / 100) }}>
+          Set poster
+        </button>}
         <button className={`${s.loopTag} ${loopPlayback ? s.loopOn : ''}`}
           onClick={() => setLoopPlayback(!loopPlayback)} title="Toggle loop (L)">
           ↻ Loop

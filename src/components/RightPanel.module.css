@@ -346,3 +346,10 @@
   box-shadow: 0 4px 24px rgba(0,0,0,0.5);
 }
 .aiMaxTooltip:hover::after { opacity: 1; }
+
+.inspectorText { font-size: 11px; color: var(--text-secondary); line-height: 1.5; overflow-wrap: anywhere; display: block; margin: 6px 0; }
+.inspectorTrack { font-size: 11px; color: var(--text-secondary); line-height: 1.6; border-top: 1px solid var(--border); padding: 8px 0; overflow-wrap: anywhere; }
+.posterPreview { display: block; width: 100%; max-height: 180px; object-fit: contain; margin-top: 10px; background: var(--bg-surface); }
+
+a.addBp { display: block; text-align: center; text-decoration: none; }
+.addBp:disabled { opacity: 0.5; cursor: not-allowed; }

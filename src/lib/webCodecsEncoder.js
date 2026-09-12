@@ -495,8 +495,8 @@ export async function encodeVideoWebCodecs(file, opts) {
   onLog(`Output: ${outFps}fps via WebCodecs ⚡ (seek capture)`)
   onProgress(5)
 
-  const includeAudio = !isGif && supportsWebCodecsAudio()
-  if (!isGif && !includeAudio) {
+  const includeAudio = opts.audioTrack !== 'none' && !isGif && supportsWebCodecsAudio()
+  if (!isGif && opts.audioTrack !== 'none' && !includeAudio) {
     onLog('ℹ Audio omitted — this browser has video WebCodecs only (e.g. Safari 17–18)')
   }
   const targetWidths = widths.length > 0 ? widths : [0]

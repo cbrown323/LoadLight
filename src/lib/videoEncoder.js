@@ -63,7 +63,7 @@ async function probeInputDurationSec(ff, inputName) {
   }
 }
 
-function buildArgs(inputName, outputName, { quality, fps, width, bitrate, format, isGif, mt }) {
+function buildArgs(inputName, outputName, { quality, fps, width, bitrate, format, isGif, mt, audioTrack = 'auto' }) {
   const args = []
 
   // Threading flag (only matters for MT core, harmless on ST)
@@ -86,6 +86,12 @@ function buildArgs(inputName, outputName, { quality, fps, width, bitrate, format
     return args
   }
 
+  if (audioTrack !== 'auto') {
+    args.push('-map', '0:v:0')
+    if (audioTrack === 'none' || isGif) args.push('-an')
+    else args.push('-map', `0:a:${audioTrack}`)
+  }
+
   if (vf.length) args.push('-vf', vf.join(','))
 
   if (format === 'webm') {
@@ -96,7 +102,7 @@ function buildArgs(inputName, outputName, { quality, fps, width, bitrate, format
     } else {
       args.push('-crf', String(qualityToCRF(quality)), '-b:v', '2M')
     }
-    if (!isGif) args.push('-c:a', 'libvorbis', '-q:a', '3')
+    if (!isGif && audioTrack !== 'none') args.push('-c:a', 'libvorbis', '-q:a', '3')
     else        args.push('-an')
   } else {
     args.push('-c:v', 'libx264')
@@ -105,7 +111,7 @@ function buildArgs(inputName, outputName, { quality, fps, width, bitrate, format
     args.push('-crf', String(qualityToCRF(quality)))
     if (bitrate > 0) args.push('-b:v', `${bitrate}k`)
     args.push('-pix_fmt', 'yuv420p', '-movflags', '+faststart')
-    if (isGif) args.push('-an')
+    if (isGif || audioTrack === 'none') args.push('-an')
     else       args.push('-c:a', 'aac', '-b:a', quality >= 80 ? '192k' : quality >= 50 ? '128k' : '96k')
   }
 
@@ -121,9 +127,14 @@ export async function encodeVideo(file, opts) {
     fps        = 0,
     bitrate    = 0,
     labelWidthsInFilename = false,
+    audioTrack = 'auto',
     onProgress = () => {},
     onLog      = () => {},
   } = opts
+
+  if (audioTrack !== 'auto' && audioTrack !== 'none' && !(Number.isInteger(audioTrack) && audioTrack >= 0)) throw new Error('Invalid audio track selection.')
+  const explicitAudioTrack = Number.isInteger(audioTrack)
+  if (explicitAudioTrack && !canUseFfmpegWasm()) throw new Error('Selecting an audio track requires Chrome or Edge. Choose Automatic or Remove audio in this browser.')
 
   const isGif    = file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif'
   const fmt      = fmtSetting === 'auto' ? 'mp4' : fmtSetting
@@ -132,7 +143,7 @@ export async function encodeVideo(file, opts) {
   // Available for MP4 and WebM in Chrome 94+, Edge 94+, Safari 16.4+
   // GIF and non-container keys never use WebCodecs muxers here.
   const webCodecsEligible = (fmt === 'mp4' || fmt === 'webm')
-  if (supportsWebCodecsVideo() && webCodecsEligible && !preferFfmpegExportForFile(file)) {
+  if (supportsWebCodecsVideo() && webCodecsEligible && !preferFfmpegExportForFile(file) && !explicitAudioTrack) {
     onLog('🚀 Using WebCodecs (hardware-accelerated)…')
     try {
       const results = await encodeVideoWebCodecs(file, opts)
@@ -143,7 +154,9 @@ export async function encodeVideo(file, opts) {
       console.warn('WebCodecs failed, using WASM fallback:', err)
     }
   } else if (fmt !== 'gif') {
-    if (preferFfmpegExportForFile(file)) {
+    if (explicitAudioTrack) {
+      onLog(`Using software encoding for audio track ${audioTrack + 1}.`)
+    } else if (preferFfmpegExportForFile(file)) {
       onLog('ℹ Using ffmpeg.wasm for this container (.mov / .avi / QuickTime MIME) — more reliable than browser decode.')
     } else if (!supportsWebCodecsVideo()) {
       onLog(webCodecsVideoSkipReason())
@@ -164,13 +177,13 @@ export async function encodeVideo(file, opts) {
   const inputName = `in_${Date.now()}.${inExt}`
 
   onProgress(2)
-  const useStableCore = preferFfmpegExportForFile(file)
+  const useStableCore = preferFfmpegExportForFile(file) || (explicitAudioTrack && fmt === 'webm')
   const { ff, fetchFile, multiThreaded: mt } = await getFFmpeg(onLog, {
     preferSingleThread: useStableCore,
   })
   onLog(
     useStableCore
-      ? 'Mode: single-threaded (QuickTime / AVI — reliable wasm path)'
+      ? 'Mode: single-threaded (stable software encoding)'
       : `Mode: ${mt ? 'multi-threaded ⚡' : 'single-threaded'}`,
   )
 
@@ -220,7 +233,7 @@ export async function encodeVideo(file, opts) {
       bump(basePct + frac * slice * 0.92)
     }, 2000)
 
-    const args = buildArgs(inputName, outputName, { quality, fps, width: w, bitrate, format: fmt, isGif, mt })
+    const args = buildArgs(inputName, outputName, { quality, fps, width: w, bitrate, format: fmt, isGif, mt, audioTrack })
     onLog(`args: ${args.join(' ')}`)
 
     let ret = -1
@@ -228,6 +241,8 @@ export async function encodeVideo(file, opts) {
       ret = await ff.exec(args)
     } catch (execErr) {
       onLog(`✗ ffmpeg exec: ${formatFfmpegWorkerError(execErr)}`)
+      try { await ff.deleteFile(outputName) } catch (_) {}
+      try { await ff.deleteFile(inputName) } catch (_) {}
       throw execErr instanceof Error ? execErr : new Error(formatFfmpegWorkerError(execErr))
     } finally {
       clearInterval(tick)
@@ -237,7 +252,9 @@ export async function encodeVideo(file, opts) {
     const elapsed = ((performance.now() - t0) / 1000).toFixed(1)
 
     if (ret !== 0) {
-      onLog(`⚠ ffmpeg returned ${ret} for ${outputName} (${elapsed}s) — may be partial`)
+      try { await ff.deleteFile(outputName) } catch (_) {}
+      try { await ff.deleteFile(inputName) } catch (_) {}
+      throw new Error(`Video encoding failed (code ${ret}). Check the selected audio track and codec.`)
     } else {
       onLog(`✓ Encoded in ${elapsed}s`)
     }

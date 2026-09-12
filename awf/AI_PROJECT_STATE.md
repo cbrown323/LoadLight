@@ -56,6 +56,25 @@ Use this checklist to ground Task Capsules in real paths (search `src/` if unsur
 - [x] Canvas / preview zoom (`ZoomStage` + `canvasViewport.js`: fit-to-canvas at 100%, zoom above 100% to native pixels, +/−/Fit toolbar, wheel, pan on overflow)
 - [x] Timeline scrubber playback (`VideoPreview`: keep `prevScrub` in sync while playing)
 
+## Milestone 1 — Inspector and accurate posters (2026-09-10)
+
+- Added Mediabunny 1.56.1 for read-only media inspection and frame extraction. Existing video/image/sequence encoders and routing are unchanged.
+- `src/lib/mediaInspector.js`: lazy BlobSource reads, container/track metadata, sampled frame rate, per-track browser decode checks, and timestamp-based JPEG extraction via CanvasSink (display rotation applied). Readers are disposed after success, failure, cancellation, or a 30-second timeout.
+- `src/components/MediaInspector.jsx`: selected-file inspector, per-file source timestamp, frame preview with actual presentation timestamp, and direct JPEG download. Preview URLs are revoked on changes/unmount.
+- `src/store/useStore.js`: per-file `posterTime` via `setPosterTime`; source timeline “Set poster” button in `CenterPanel.jsx`. Hidden in After view because that timeline belongs to the shortened encoded preview.
+- `src/lib/exportEngine.js`: batch posters use saved source times (default 0), including selected image-sequence frames. Unsupported poster extraction is logged without discarding successful encoded outputs. Times beyond the end select the final frame.
+- Validation: production build and Chromium UI checks pass; MP4/WebM/rotated MOV fixture pixels and presentation times checked at start, mid-frame, boundaries, and EOF; direct JPEG download and two-file ZIP posters verified. Repeated 1080p poster reads from a 20 MB input, abort handling, and unavailable-decoder handling pass. Safari/Firefox and multi-gigabyte batches have not been verified.
+- Scope limitation: Mediabunny does not inspect every accepted input container (notably GIF/AVI). Unsupported containers/codecs show a clear inspector message; batch posters are skipped with a warning. Still images/sequences show basic ingestion metadata. Decode support does not guarantee encoder support.
+
+## Milestone 2 — Advanced media workflow (2026-09-12)
+
+- `src/lib/contactSheet.js` and `src/components/ContactSheet.jsx`: 12-frame contact sheets with actual source timestamps, aspect-preserving thumbnails (including rotation), JPEG preview/download, progress, cancellation, and per-file inclusion in individual/ZIP export. Decoding is sequential with one 320 × 180 canvas in the sink pool and a bounded 1008 × 892 output; readers share the inspector’s validation, cancellation, and 30-second timeout. Preview URLs are revoked on replacement/unmount.
+- `src/components/MediaInspector.jsx` and `src/lib/mediaInspector.js`: export audio selector identifies audio tracks by ordinal, language/name, codec, and channels. The store saves Automatic, Remove audio, or a specific zero-based audio ordinal per file. These settings apply independently of global quality settings.
+- `src/lib/exportEngine.js`, `src/lib/videoEncoder.js`, and `src/lib/webCodecsEncoder.js`: propagate audio choice to export. Mute omits audio on both encoder paths. Specific tracks use explicit FFmpeg stream mapping and software encoding (single-threaded for WebM to avoid a verified multi-threaded stall); missing tracks fail visibly rather than silently substituting audio. Automatic preserves existing encoder behavior. Failed FFmpeg runs discard partial output.
+- Validation: production build; Chromium contact sheets for MP4, WebM, and rotated MOV; JPEG download; two-track language metadata; MP4 exports of each selected track with independently verified 440/880 Hz tones; WebM selected-track export, muted exports on software and WebCodecs paths, and missing-track failure; two-file ZIP with a contact sheet only for the opted-in file; settings retained across file selection; repeated contact sheets from a 20 MB 1080p clip; mid-operation cancellation; invalid media and unavailable decoder errors. Post-GC JS heap was about 9 MB after the resource test (not a measurement of total decoder/WASM memory).
+- Limitations: contact sheets currently cover decodable video files, not still-image collections or image sequences; fixed 12-frame UI layout; short clips can repeat frames. Specific audio tracks require Chrome/Edge software encoding and may be slower or memory-heavy for large files. GIF exports and visual previews remain silent. Safari/Firefox and multi-gigabyte batches are unverified. No new dependencies or deployment setup are required.
+- Existing issue observed during verification: automatically detected fractional frame rates can make the MP4 WebCodecs muxer reject a job; Chromium successfully falls back to FFmpeg. This milestone leaves that separate encoder issue unchanged.
+
 ## Known Issues
 
 1. **TIFF:** Native `createImageBitmap` often fails in Chrome; [`tiffDecode.js`](../src/lib/tiffDecode.js) falls back to ffmpeg (first frame → PNG). Very large or exotic TIFFs may still fail or load slowly on first ffmpeg init.
@@ -70,7 +89,7 @@ Use this checklist to ground Task Capsules in real paths (search `src/` if unsur
 
 ## Dependencies (from package.json)
 
-- **Runtime:** `react`, `react-dom`, `zustand`, `@ffmpeg/ffmpeg`, `@ffmpeg/util`, `jszip`, `mp4-muxer`, `webm-muxer`
+- **Runtime:** `react`, `react-dom`, `zustand`, `@ffmpeg/ffmpeg`, `@ffmpeg/util`, `jszip`, `mp4-muxer`, `webm-muxer`, `mediabunny`
 - **Build:** `vite`, `@vitejs/plugin-react`, `@ffmpeg/core-mt` (dev)
 
 ---

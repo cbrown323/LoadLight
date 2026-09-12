@@ -61,6 +61,19 @@ const useStore = create((set, get) => ({
   ingestMode:    'smart-sequence',
   pendingAmbiguous: [],
 
+  setPosterTime: (id, posterTime) => {
+    if (!Number.isFinite(posterTime) || posterTime < 0) return
+    set((state) => ({ files: state.files.map((fo) => fo.id === id ? { ...fo, posterTime } : fo) }))
+  },
+
+  setAudioTrack: (id, audioTrack) => {
+    if (audioTrack !== 'auto' && audioTrack !== 'none' && !(Number.isInteger(audioTrack) && audioTrack >= 0)) return
+    set((state) => ({ files: state.files.map((fo) => fo.id === id ? { ...fo, audioTrack } : fo) }))
+  },
+  setContactSheet: (id, contactSheet) => {
+    set((state) => ({ files: state.files.map((fo) => fo.id === id ? { ...fo, contactSheet: !!contactSheet } : fo) }))
+  },
+
   clearIngestNotice: () => set({ ingestNotice: null }),
   setIngestMode: (ingestMode) => set({ ingestMode }),
 
@@ -94,7 +107,7 @@ const useStore = create((set, get) => ({
         fo,
         (updated) => {
           set((s) => {
-            const files     = s.files.map((f) => (f.id === updated.id ? updated : f))
+            const files     = s.files.map((f) => (f.id === updated.id ? { ...updated, posterTime: f.posterTime } : f))
             const activeIdx = s.activeIdx < 0 ? 0 : s.activeIdx
             return { files, activeIdx }
           })
