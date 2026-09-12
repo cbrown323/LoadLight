@@ -94,5 +94,5 @@ Use this checklist to ground Task Capsules in real paths (search `src/` if unsur
 
 ---
 
-**Last Updated:** 2026-08-24
-**Package version:** 1.5.0 (see repo `package.json`; release notes v1.5.1 for canvas viewport fix)
+**Last Updated:** 2026-09-12
+**Package version:** 2.0.2 (aligned with the website version badge and release notes for media inspection, poster selection, contact sheets, and per-file audio controls)

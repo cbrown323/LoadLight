@@ -2,11 +2,24 @@ import React, { useState, useRef, useEffect } from 'react'
 import s from './ReleaseNotes.module.css'
 
 /** Latest shipped version — TopBar reads this so it stays aligned with release notes. */
-export const LATEST_RELEASE_VERSION = 'v1.5.2'
+export const LATEST_RELEASE_VERSION = 'v2.0.2'
 
 const NOTES = [
   {
     version: LATEST_RELEASE_VERSION,
+    date: 'Sep 2026',
+    items: [
+      'Media inspector shows container, video and audio track details, dimensions, rotation, estimated frame rate, and browser decoding support',
+      'Choose a poster frame by source timestamp or use Set poster on the timeline; preview and download a JPEG, or include it in batch exports',
+      'Poster selection supports video and image sequences, with times past the end using the final frame',
+      'Generate 12-frame video contact sheets with source timestamps; preview, download a JPEG, or include one per selected file in individual and ZIP exports',
+      'Per-file audio controls for MP4/WebM exports: Automatic, Remove audio, or a specific track identified by name or language, codec, and channels',
+      'Specific audio track selection uses software encoding in Chrome or Edge; unavailable tracks fail clearly instead of silently substituting another track',
+      'Contact sheet generation includes progress and cancellation; unsupported poster or contact sheet extraction reports a warning while preserving successful media exports',
+    ],
+  },
+  {
+    version: 'v1.5.2',
     date: 'Aug 2026',
     items: [
       'Smart Import detects numbered image sequences and keeps version labels, while Files continues to import every asset independently',
