@@ -11,6 +11,11 @@
  *   fileexample_v001.1001 + v002.1001 → 2 singles (same frame, different versions)
  *   render.1001–1050.exr               → 1 sequence
  *   hero_001–120.png                  → 1 sequence (medium confidence)
+ *   scene001_beauty.exr ×3            → 3 singles (shared suffix, number is not the frame)
+ *   logo_1.png + logo_2.png           → review (short unpadded suffix, not auto-bundled)
+ *   notes_2024.jpg + notes_2025.jpg   → 2 singles (year-like suffix)
+ *   widget_1080.jpg + widget_1920.jpg → 2 singles (not a frame progression)
+ *   photo (1).jpg + photo (2).jpg     → 2 singles (duplicate counter)
  *   IMG_1867–1871.jpg                 → 5 singles (camera roll, not a sequence)
  *   Screenshot 2026-06-24 at 02.24.50–02.25.05.png → singles (timestamped captures)
  */
@@ -124,15 +129,12 @@ function classifyRun(raw, digits, stem, start) {
   // Shot IDs on camera rolls are 4-digit counters — never treat as frames.
   if (isCameraRollStem(stem)) return 'unknown-numeric'
 
-  const value = parseInt(digits, 10)
   const prev = start > 0 ? stem[start - 1] : ''
-  // Nuke / ffmpeg image2: name.1001.ext
-  if (prev === '.') return 'frame'
+  // Nuke / ffmpeg image2: name.1001.ext — a short ".2" is a copy suffix, not a frame.
+  if (prev === '.' && digits.length >= 4) return 'frame'
   // Zero-padded indices (0001, 0100) strongly suggest frames
   if (digits.length >= 3 && digits[0] === '0') return 'frame'
-  if (digits.length >= 4 || value >= 1001) return 'frame'
-  if (value >= 1 && value <= 999) return 'unknown-numeric'
-  return 'frame'
+  return 'unknown-numeric'
 }
 
 /** @param {string} stem @param {NumericRun} run */
@@ -140,22 +142,78 @@ function signatureForRun(stem, run) {
   return stem.slice(0, run.start) + '#' + stem.slice(run.end)
 }
 
-/** @param {number[]} values */
-function isMonotonicStep(values, step = 1) {
-  if (values.length < 2) return true
-  for (let i = 1; i < values.length; i++) {
-    if (values[i] - values[i - 1] !== step) return false
-  }
-  return true
-}
-
 /** @param {NumericRun} run @param {number} count */
 function confidenceForRun(run, count) {
   if (run.kind === 'frame') return count >= 3 ? 'high' : 'medium'
   if (run.kind === 'version') return 'low'
-  if (count >= 5 && isMonotonicStep) return 'medium'
   if (count >= 3) return 'medium'
   return 'low'
+}
+
+/**
+ * Frame index must be the final token. `scene001_beauty` shares a suffix;
+ * the number is a shot id, not a frame.
+ * @param {string} stem
+ * @returns {NumericRun|null}
+ */
+function trailingNumericSuffix(stem) {
+  const runs = findNumericRuns(stem)
+  if (!runs.length) return null
+  const run = runs[runs.length - 1]
+  if (run.end !== stem.length) return null
+  if (run.kind === 'version') return null
+  // "photo (1).jpg" download / duplicate counters.
+  if (run.start > 0 && stem[run.start - 1] === '(') return null
+  return run
+}
+
+/** @param {string} stem @param {NumericRun} run */
+function suffixSeparator(stem, run) {
+  if (run.start === 0) return ''
+  return stem[run.start - 1]
+}
+
+/** @param {string} sep */
+function isFrameSeparator(sep) {
+  return sep === '' || sep === '.' || sep === '_' || sep === '-' || sep === ' '
+}
+
+/**
+ * Adjacent frames, with a few missing frames allowed.
+ * A constant stride (10, 20, 30) or a resolution pair (1080, 1920) is not a sequence.
+ * @param {number[]} values
+ */
+function isFrameProgression(values) {
+  const unique = [...new Set(values)].sort((a, b) => a - b)
+  if (unique.length !== values.length || unique.length < 2) return false
+  /** @type {number[]} */
+  const gaps = []
+  for (let i = 1; i < unique.length; i++) gaps.push(unique[i] - unique[i - 1])
+  const span = unique[unique.length - 1] - unique[0]
+  if (span <= 0) return false
+  const density = (unique.length - 1) / span
+  const maxGap = Math.max(...gaps)
+  const unitSteps = gaps.filter((g) => g === 1).length
+  return maxGap <= 3 && density >= 0.75 && unitSteps >= gaps.length * 0.75
+}
+
+/**
+ * @param {string} sep
+ * @param {string} digits
+ * @param {number[]} values
+ */
+function isStrongFrameSuffix(sep, digits, values) {
+  if (digits.length >= 3 && digits[0] === '0') return true
+  if (sep === '.' && digits.length >= 4) return true
+  const yearLike = digits[0] !== '0' && values.every((v) => v >= 1900 && v <= 2099)
+  if (yearLike) return false
+  return digits.length >= 4 && values[0] >= 1001 && (sep === '.' || sep === '_' || sep === '-')
+}
+
+/** Years written as a suffix (`notes_2024`) are labels, not frame indices. */
+function isYearLikeSuffix(sep, digits, values) {
+  if (sep === '.' || digits[0] === '0' || digits.length !== 4) return false
+  return values.every((v) => v >= 1900 && v <= 2099)
 }
 
 /** @param {string} signature @param {string} ext */
@@ -193,7 +251,7 @@ function nextId() {
  */
 export function planIngest(files, opts = {}) {
   const minFrames = opts.minFrames ?? MIN_SEQUENCE_FRAMES
-  /** @type {Map<string, { signature: string, ext: string, runKind: TokenKind, members: { file: File, run: NumericRun, runs: NumericRun[] }[] }>} */
+  /** @type {Map<string, { signature: string, ext: string, runKind: TokenKind, sep: string, members: { file: File, run: NumericRun, runs: NumericRun[] }[] }>} */
   const buckets = new Map()
 
   for (const file of files) {
@@ -202,16 +260,20 @@ export function planIngest(files, opts = {}) {
     if (isCameraRollStem(stem) || isTimestampedScreenshotStem(stem)) continue
 
     const runs = findNumericRuns(stem)
-    if (!runs.length) continue
+    const run = trailingNumericSuffix(stem)
+    if (!run) continue
+    const sep = suffixSeparator(stem, run)
+    if (!isFrameSeparator(sep)) continue
+    // macOS duplicate names: "photo 2.jpg", "photo 3.jpg".
+    if (sep === ' ' && run.digits.length <= 2 && run.digits[0] !== '0') continue
 
-    for (const run of runs) {
-      const signature = signatureForRun(stem, run)
-      const key = `${ext}::${signature}::${run.start}:${run.end}`
-      if (!buckets.has(key)) {
-        buckets.set(key, { signature, ext, runKind: run.kind, members: [] })
-      }
-      buckets.get(key).members.push({ file, run, runs })
+    const signature = signatureForRun(stem, run)
+    // Digit width stays in the key so hero_01 and hero_001 are not one sequence.
+    const key = `${ext}::${signature}::${run.digits.length}`
+    if (!buckets.has(key)) {
+      buckets.set(key, { signature, ext, runKind: run.kind, sep, members: [] })
     }
+    buckets.get(key).members.push({ file, run, runs })
   }
 
   /** @type {{ bucket: typeof buckets extends Map<string, infer V> ? V : never, score: number }[]} */
@@ -221,21 +283,16 @@ export function planIngest(files, opts = {}) {
     if (bucket.members.length < minFrames) continue
 
     const values = bucket.members.map((m) => m.run.value)
-    const sorted = [...values].sort((a, b) => a - b)
-    const stepOk = isMonotonicStep(sorted, 1) || isMonotonicStep(sorted, sorted[1] - sorted[0] || 1)
-    const runKind = bucket.runKind
     const count = bucket.members.length
+    if (!isFrameProgression(values)) continue
 
-    if (runKind === 'version') {
-      continue
-    }
+    const digits = bucket.members[0].run.digits
+    if (isYearLikeSuffix(bucket.sep, digits, values)) continue
+    const strong = isStrongFrameSuffix(bucket.sep, digits, values)
+    const runKind = strong ? 'frame' : 'unknown-numeric'
+    bucket.runKind = runKind
 
-    let confidence = confidenceForRun({ kind: runKind, raw: '', digits: '', value: 0, start: 0, end: 0 }, count)
-    if (runKind === 'unknown-numeric' && !stepOk) continue
-    if (runKind === 'unknown-numeric' && count < 3) {
-      confidence = 'low'
-    }
-
+    const confidence = confidenceForRun({ kind: runKind, raw: '', digits: '', value: 0, start: 0, end: 0 }, count)
     const runPos = bucket.members[0].run.start
     const score = count * 1000 + runPos * 10 + (confidence === 'high' ? 3 : confidence === 'medium' ? 2 : 1)
     candidates.push({ bucket, score })
@@ -253,15 +310,14 @@ export function planIngest(files, opts = {}) {
     const members = bucket.members.filter((m) => !usedFiles.has(m.file))
     if (members.length < minFrames) continue
 
-    const values = bucket.members.map((m) => m.run.value)
     const sortedMembers = [...members].sort((a, b) => a.run.value - b.run.value)
     const runKind = bucket.runKind
     const count = members.length
-    const confidence = confidenceForRun(members[0].run, count)
+    const confidence = confidenceForRun({ ...members[0].run, kind: runKind }, count)
 
-    if (runKind === 'unknown-numeric' && confidence === 'low') {
+    if (runKind === 'unknown-numeric') {
       const sampleStem = ingestStemAndExt(members[0].file.name).stem
-      const asSequence = buildSequenceGroup(bucket.signature, bucket.ext, sortedMembers, sampleStem, 'medium', 'Unlabeled numeric suffix — confirm sequence vs separate files')
+      const asSequence = buildSequenceGroup(bucket.signature, bucket.ext, sortedMembers, sampleStem, 'low', 'Unlabeled numeric suffix — confirm sequence vs separate files')
       ambiguous.push({
         id: nextId(),
         displayName: asSequence.displayName,
@@ -280,10 +336,8 @@ export function planIngest(files, opts = {}) {
       bucket.ext,
       sortedMembers,
       sampleStem,
-      runKind === 'unknown-numeric' ? 'medium' : confidence,
-      runKind === 'frame' || runKind === 'unknown-numeric'
-        ? `${count} frames detected (${sortedMembers[0].run.value}–${sortedMembers[sortedMembers.length - 1].run.value})`
-        : `${count} frames`,
+      confidence,
+      `${count} frames detected (${sortedMembers[0].run.value}–${sortedMembers[sortedMembers.length - 1].run.value})`,
     )
     group.versionLabel = extractVersionLabel(sampleStem, versionRun)
 
