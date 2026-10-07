@@ -68,6 +68,7 @@ Vercel handles SSL automatically.
 ## Features
 
 - Drag & drop or folder import
+- Smart Import groups real frame sequences (`render.1001.exr`, `hero_001.png`) and leaves similar suffixes, versions, and duplicate copies as separate files
 - Real after-preview (images re-encode live, video encodes a 4s clip on demand)
 - WebP / AVIF / JPG / PNG / MP4 / WebM / GIF output
 - Responsive breakpoint export with upscale guard

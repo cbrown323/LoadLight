@@ -31,7 +31,7 @@
 
 Use this checklist to ground Task Capsules in real paths (search `src/` if unsure):
 
-- [x] **Ingestion / accepted formats:** [`src/lib/mediaIngest.js`](../src/lib/mediaIngest.js) + `addFiles` in [`useStore.js`](../src/store/useStore.js); **Files** imports assets independently, while **Smart Import** detects image sequences and asks the user to resolve ambiguous numbered groups; ingest errors → `ingestNotice` in [`LeftPanel.jsx`](../src/components/LeftPanel.jsx)
+- [x] **Ingestion / accepted formats:** [`src/lib/mediaIngest.js`](../src/lib/mediaIngest.js) + `addFiles` in [`useStore.js`](../src/store/useStore.js); **Files** imports assets independently, while **Smart Import** ([`sequenceNaming.js`](../src/lib/sequenceNaming.js)) auto-groups a still set only when the frame number is the final token and the values step like frames. Shared suffixes, versions, years, resolutions, and duplicate counters stay separate. Short unpadded suffixes ask for confirmation. Ingest errors → `ingestNotice` in [`LeftPanel.jsx`](../src/components/LeftPanel.jsx)
 - [x] **Canvas viewport math:** [`src/lib/canvasViewport.js`](../src/lib/canvasViewport.js) — fit contain scale, pan bounds, zoom steps, native-pixel cap
 - [x] **Canvas / static image preview:** [`CenterPanel.jsx`](../src/components/CenterPanel.jsx) — `VideoPreview` / `StaticPreview` inside `ZoomStage` (fit-based 100%, zoom >100%, wheel + toolbar, pan on overflow, Fit to canvas)
 - [x] **Timeline / scrubber:** [`CenterPanel.jsx`](../src/components/CenterPanel.jsx) local state + `VideoPreview`; `prevScrub` synced while `playing` to avoid pause/jump glitches
@@ -74,6 +74,13 @@ Use this checklist to ground Task Capsules in real paths (search `src/` if unsur
 - Validation: production build; Chromium contact sheets for MP4, WebM, and rotated MOV; JPEG download; two-track language metadata; MP4 exports of each selected track with independently verified 440/880 Hz tones; WebM selected-track export, muted exports on software and WebCodecs paths, and missing-track failure; two-file ZIP with a contact sheet only for the opted-in file; settings retained across file selection; repeated contact sheets from a 20 MB 1080p clip; mid-operation cancellation; invalid media and unavailable decoder errors. Post-GC JS heap was about 9 MB after the resource test (not a measurement of total decoder/WASM memory).
 - Limitations: contact sheets currently cover decodable video files, not still-image collections or image sequences; fixed 12-frame UI layout; short clips can repeat frames. Specific audio tracks require Chrome/Edge software encoding and may be slower or memory-heavy for large files. GIF exports and visual previews remain silent. Safari/Firefox and multi-gigabyte batches are unverified. No new dependencies or deployment setup are required.
 - Existing issue observed during verification: automatically detected fractional frame rates can make the MP4 WebCodecs muxer reject a job; Chromium successfully falls back to FFmpeg. This milestone leaves that separate encoder issue unchanged.
+
+## Milestone 3 — Stricter sequence detection (2026-10-06)
+
+- `src/lib/sequenceNaming.js`: Smart Import no longer treats a similar numeric suffix as a frame index. Grouping requires the varying number to end the filename and a near-contiguous frame progression.
+- Names that stay separate include shared pass suffixes (`scene001_beauty.exr`), version tokens, year-like suffixes, resolution pairs, parenthetical duplicate counters, macOS “name 2.jpg” copies, camera rolls, and timestamped screenshots.
+- Weak unpadded suffixes (`logo_1.png`, `logo_2.png`) go to the existing review dialog instead of importing as a sequence. Conventional runs (`render.1001.exr`, `hero_001.png`, `shot_1001.exr`) still auto-group.
+- Limitation: unpadded frame names need confirmation. Numbers from 1900–2099 without a dot or zero-padding stay separate. A short run with large holes, or two files sharing one frame number, stays separate.
 
 ## Known Issues
 

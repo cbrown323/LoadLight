@@ -2,11 +2,20 @@ import React, { useState, useRef, useEffect } from 'react'
 import s from './ReleaseNotes.module.css'
 
 /** Latest shipped version — TopBar reads this so it stays aligned with release notes. */
-export const LATEST_RELEASE_VERSION = 'v2.0.2'
+export const LATEST_RELEASE_VERSION = 'v2.0.3'
 
 const NOTES = [
   {
     version: LATEST_RELEASE_VERSION,
+    date: 'Oct 2026',
+    items: [
+      'Smart Import auto-groups stills only when the frame number is the final name token and the numbers step like frames',
+      'Shared suffixes, version stacks, years, resolutions, and duplicate counters such as “photo (1).jpg” stay separate files',
+      'Short unpadded suffixes such as logo_1.png and logo_2.png ask for confirmation instead of importing as a sequence',
+    ],
+  },
+  {
+    version: 'v2.0.2',
     date: 'Sep 2026',
     items: [
       'Media inspector shows container, video and audio track details, dimensions, rotation, estimated frame rate, and browser decoding support',

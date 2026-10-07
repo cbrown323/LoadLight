@@ -1,5 +1,16 @@
 # DEVELOPMENT LOG
 
+## 2026-10-06 — Stricter image-sequence detection
+
+- **Accomplished:** Smart Import no longer bundles stills just because their names share a similar numeric suffix. A set becomes a sequence only when the varying number is the final token and the values progress like frames.
+- **Stays separate:** Shared pass suffixes (`scene001_beauty.exr`), version stacks (`file_v001`), year-like suffixes (`notes_2024`), resolutions (`widget_1080` / `widget_1920`), parenthetical and macOS duplicate counters, camera rolls, and timestamped screenshots.
+- **Review:** Short unpadded suffixes (`logo_1.png`, `logo_2.png`) open the existing import review instead of importing as a sequence.
+- **Still sequences:** Editorial frame runs such as `render.1001.exr`–`render.1050.exr`, zero-padded `hero_001.png`–`hero_120.png`, and short VFX pairs such as `shot_1001.exr` / `shot_1002.exr`.
+- **Docs:** Release notes `v2.0.3`, `README.md`, and `awf/AI_PROJECT_STATE.md`.
+- **Testing:** Naming cases exercised through `planIngest` in `src/lib/sequenceNaming.js`.
+
+---
+
 ## 2026-08-24 — Smart Import and canvas navigation
 
 - **Accomplished:** Replaced the separate Sequences and VFX Tree choices with a two-mode importer: **Files** imports every asset independently, while **Smart Import** detects numbered image sequences, retains version labels, and asks the user to resolve only ambiguous numbered groups.
