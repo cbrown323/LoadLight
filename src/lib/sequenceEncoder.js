@@ -29,7 +29,7 @@ export async function encodeImageSequence(fo, opts) {
   const frames = fo.frames || []
   if (frames.length < 2) throw new Error('Sequence has too few frames to export.')
 
-  const ff = await getFFmpeg(false, onLog)
+  const { ff } = await getFFmpeg(onLog)
   const tag = `seq_${Date.now()}`
   const listName = `${tag}_list.txt`
   const ext = ingestExt(frames[0].file.name) || 'png'
@@ -82,7 +82,10 @@ export async function encodeImageSequence(fo, opts) {
     if (ret !== 0) throw new Error(formatFfmpegWorkerError(`ffmpeg exited ${ret}`))
 
     const outData = await ff.readFile(outName)
-    const blob = new Blob([outData.buffer], { type: mimeForFormat(format) })
+    if (!outData || outData.byteLength === 0) {
+      throw new Error('Sequence encode produced an empty file.')
+    }
+    const blob = new Blob([outData.slice(0)], { type: mimeForFormat(format) })
     const base = (fo.sequenceBaseName || fo.file.name.replace(/\.[^.]+$/, ''))
       .replace(/\.+$/, '')
     const suffix = labelWidthsInFilename && width > 0 ? `-${width}` : ''
